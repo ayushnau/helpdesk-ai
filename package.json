@@ -1,0 +1,20 @@
+{
+  "name": "learningai",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "start": "npx tsx agent.ts",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@types/node": "^25.6.0",
+    "dotenv": "^17.4.2",
+    "tsx": "^4.21.0",
+    "typescript": "^6.0.3"
+  }
+}
