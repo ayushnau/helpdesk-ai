@@ -4,7 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "start": "npx tsx agent.ts",
+    "start": "npx tsx main.ts",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
@@ -15,6 +15,8 @@
     "@types/node": "^25.6.0",
     "dotenv": "^17.4.2",
     "tsx": "^4.21.0",
-    "typescript": "^6.0.3"
+    "typescript": "^6.0.3",
+    "zod": "^4.3.6",
+    "zod-to-json-schema": "^3.25.2"
   }
 }

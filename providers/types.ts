@@ -32,11 +32,22 @@ export interface ToolCall {
   arguments: Record<string, unknown>;  // the inputs
 }
 
+// Per-call token counts, as reported by the provider.
+// null when the provider doesn't expose usage (some Ollama builds don't).
+// Every serious agent logs this: it's how you spot a runaway loop or a
+// context bloat bug before it burns $500 in evals.
+export interface TokenUsage {
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+}
+
 // What we get back from the LLM after one API call
 export interface ProviderResponse {
   text: string;           // what the LLM said (may be empty if it only called tools)
   toolCalls: ToolCall[];  // tools it wants us to run (empty if none)
-  finishReason: "stop" | "tool_calls" | "length" | "error";
+  status: "stop" | "tool_calls" | "length";
+  usage: TokenUsage | null;
 }
 
 // The one method every provider must implement

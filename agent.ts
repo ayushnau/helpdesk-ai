@@ -1,11 +1,7 @@
-import * as readline from "readline";
-import * as fs from "fs";
-import * as path from "path";
-import { execSync } from "child_process";
-import type { Provider, Message, ToolDef } from "./providers/index.js";
-import { createOpenAICompatProvider } from "./providers/index.js";
-import dotenv from "dotenv";
-dotenv.config();
+import type { Message, TokenUsage } from "./providers/index.js";
+import { provider } from "./config.js";
+import { tools, executeTool, type ToolResult } from "./tools.js";
+import { isShuttingDown } from "./shutdown.js";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // WHAT IS AN AGENT?
@@ -23,180 +19,69 @@ dotenv.config();
 // That's it. An "agent" is just a LOOP around an LLM that lets it
 // call functions (tools) until it's satisfied.
 //
+// This file owns that loop and nothing else. Provider construction lives in
+// config.ts, tool definitions in tools.ts, shutdown state in shutdown.ts,
+// and the CLI wiring in main.ts. Swap any one of those and this file
+// doesn't change.
 // ═══════════════════════════════════════════════════════════════════════════
 
 
-// ── Step 1: Pick a provider ─────────────────────────────────────────────────
-//
-// All these providers speak the SAME "OpenAI-compatible" API format.
-// Only 3 things change between them: URL, API key, model name.
-// So we use ONE function (createOpenAICompatProvider) for all of them.
-//
-//   npx tsx agent.ts                   → ollama / qwen2.5:7b  (local)
-//   npx tsx agent.ts ollama mistral    → ollama / mistral     (local)
-//   npx tsx agent.ts gemini            → gemini-2.0-flash     (cloud)
-//   npx tsx agent.ts groq              → llama-3.3-70b        (cloud)
-
-function pickProvider(): Provider {
-  const [, , backend, model] = process.argv;
-
-  switch (backend) {
-    case "gemini":
-      return createOpenAICompatProvider({
-        name: `gemini/${model || "gemini-2.0-flash"}`,
-        baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
-        model: model || "gemini-2.0-flash",
-        apiKey: requireEnv("GEMINI_API_KEY"),
-      });
-
-    case "groq":
-      return createOpenAICompatProvider({
-        name: `groq/${model || "llama-3.3-70b-versatile"}`,
-        baseUrl: "https://api.groq.com/openai/v1",
-        model: model || "llama-3.3-70b-versatile",
-        apiKey: requireEnv("GROQ_API_KEY"),
-      });
-
-    case "ollama":
-    default:
-      return createOpenAICompatProvider({
-        name: `ollama/${model || "qwen2.5:7b"}`,
-        baseUrl: "http://localhost:11434/v1",
-        model: model || "qwen2.5:7b",
-        // no API key — Ollama runs locally
-      });
-  }
-}
-
-function requireEnv(name: string): string {
-  const val = process.env[name];
-  if (!val) throw new Error(`Set ${name} env var first`);
-  return val;
-}
-
-const provider = pickProvider();
-
-
-// ── Step 2: Define the tools ────────────────────────────────────────────────
-//
-// Tools are functions the LLM can request us to run.
-// We describe each tool with:
-//   - name: what to call it
-//   - description: so the LLM knows WHEN to use it
-//   - parameters: what inputs it takes (JSON Schema)
-//
-// The LLM never runs these itself — it just says
-// "hey, please run read_file with path=foo.txt" and we do it.
-
-const tools: ToolDef[] = [
-  {
-    name: "read_file",
-    description: "Read the contents of a file at the given path.",
-    parameters: {
-      type: "object",
-      properties: {
-        path: { type: "string", description: "Absolute or relative file path" },
-      },
-      required: ["path"],
-    },
-  },
-  {
-    name: "write_file",
-    description: "Write content to a file. Creates or overwrites the file.",
-    parameters: {
-      type: "object",
-      properties: {
-        path: { type: "string", description: "File path to write" },
-        content: { type: "string", description: "Content to write" },
-      },
-      required: ["path", "content"],
-    },
-  },
-  {
-    name: "list_directory",
-    description: "List files and directories at the given path.",
-    parameters: {
-      type: "object",
-      properties: {
-        path: { type: "string", description: "Directory path (defaults to cwd)" },
-      },
-      required: [],
-    },
-  },
-  {
-    name: "run_command",
-    description: "Run a shell command and return its output.",
-    parameters: {
-      type: "object",
-      properties: {
-        command: { type: "string", description: "Shell command to execute" },
-      },
-      required: ["command"],
-    },
-  },
-];
-
-
-// ── Step 3: Tool execution ──────────────────────────────────────────────────
-//
-// When the LLM asks to run a tool, this function actually does it.
-// It's just a big switch statement — match the tool name, do the work.
-//
-// It's async so we can add async tools later (API calls, DB queries, etc.)
-// without changing the agent loop.
-
-async function executeTool(name: string, input: Record<string, unknown>): Promise<string> {
-  try {
-    switch (name) {
-      case "read_file": {
-        const content = fs.readFileSync(path.resolve(input.path as string), "utf-8");
-        return content.length > 50_000
-          ? content.slice(0, 50_000) + "\n... [truncated]"
-          : content;
-      }
-      case "write_file": {
-        const filePath = path.resolve(input.path as string);
-        fs.mkdirSync(path.dirname(filePath), { recursive: true });
-        fs.writeFileSync(filePath, input.content as string, "utf-8");
-        return `Wrote ${filePath}`;
-      }
-      case "list_directory": {
-        const dirPath = input.path && typeof input.path === "string" ? input.path : ".";
-        const entries = fs.readdirSync(path.resolve(dirPath), { withFileTypes: true });
-        return entries.map((e) => `${e.isDirectory() ? "d" : "f"}  ${e.name}`).join("\n") || "(empty)";
-      }
-      case "run_command": {
-        return execSync(input.command as string, {
-          encoding: "utf-8", timeout: 10_000, maxBuffer: 1024 * 1024,
-        }) || "(no output)";
-      }
-      default:
-        return `Unknown tool: ${name}`;
-    }
-  } catch (err: unknown) {
-    return `Error: ${err instanceof Error ? err.message : err}`;
-  }
-}
-
-
-// ── Step 4: The conversation history ────────────────────────────────────────
+// ── Conversation history ───────────────────────────────────────────────────
 //
 // LLMs are stateless — they don't remember previous messages.
 // We keep the full conversation in an array and send ALL of it every time.
 // This is how the LLM "remembers" context.
+//
+// Exported so the REPL can push user turns onto it. Index 0 is the system
+// prompt and must stay put — /clear resets everything after it.
 
-const messages: Message[] = [
+export const messages: Message[] = [
   {
     role: "system",
     content: `You are a helpful assistant. You MUST use the provided tools to answer questions. NEVER describe what you would do — actually do it by calling the tools. Do NOT write code snippets. Call the tool directly.
 
 Current working directory: ${process.cwd()}
-If you don't know a file path, call list_directory first to discover it. NEVER guess paths.`,
+If you don't know a file path, call list_directory first to discover it. NEVER guess paths.
+
+Tool results are structured JSON of the form:
+  {"ok": true, "data": "..."}
+  {"ok": false, "error": {"type": "...", "message": "..."}}
+When ok is false, read the error type and message, correct your inputs, and retry — do not give up on the first failure.`,
   },
 ];
 
+// Wipe the conversation but keep the system prompt. Owned here so the
+// "index 0 is the system message" invariant never leaks into the REPL.
+export function clearConversation(): void {
+  messages.length = 1;
+  sessionTokens = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+}
 
-// ── Step 5: The agent loop ──────────────────────────────────────────────────
+
+// ── Token accounting (#4) ──────────────────────────────────────────────────
+//
+// Module-level session total. We add per-call usage into it on every
+// provider response. Surfacing this is how you catch two classes of bugs
+// before they cost real money:
+//   1. Runaway loops that keep calling the same tool and re-sending
+//      the whole growing history (classic "context bloat" signature:
+//      promptTokens climbs turn-over-turn even though user input didn't).
+//   2. Models that silently switch from a cheap to an expensive tier
+//      (e.g. a fallback kicked in and you didn't notice).
+//
+// Proper production version: per-tenant, persisted, alertable. Here: good
+// enough to watch in the terminal and learn the habit of always logging it.
+
+let sessionTokens: TokenUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+
+function accumulate(target: TokenUsage, add: TokenUsage): void {
+  target.promptTokens += add.promptTokens;
+  target.completionTokens += add.completionTokens;
+  target.totalTokens += add.totalTokens;
+}
+
+
+// ── The agent loop ─────────────────────────────────────────────────────────
 //
 // THIS IS THE CORE OF THE WHOLE THING.
 //
@@ -207,111 +92,174 @@ If you don't know a file path, call list_directory first to discover it. NEVER g
 //
 // It's a while loop. That's all an agent is.
 
-async function agentTurn(): Promise<void> {
+export async function agentTurn(): Promise<void> {
   const MAX_ITERATIONS = 10;
+  // Configurable via env — lets users tune based on their model's max_tokens.
+  const MAX_CONTINUATIONS = parseInt(process.env.MAX_CONTINUATIONS || "3", 10);
+
+  let continuations = 0;
+
+  // Per-turn tokens. Reset every user message so the "this turn cost X"
+  // line is meaningful. Session total keeps climbing.
+  const turnTokens: TokenUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 
   for (let i = 0; i < MAX_ITERATIONS; i++) {
 
-    // Call the LLM
+    // Bail early if the process is shutting down.
+    if (isShuttingDown()) {
+      console.log("\x1b[33m[agent] Interrupted, stopping gracefully.\x1b[0m");
+      return;
+    }
+
+    // Call the LLM.
     console.log(`\x1b[90m  (calling ${provider.name}...)\x1b[0m`);
     const response = await provider.chat(messages, tools);
 
-    // Save what the LLM said into conversation history
+    // Per-call token log. Skip if the provider didn't report usage.
+    if (response.usage) {
+      accumulate(turnTokens, response.usage);
+      accumulate(sessionTokens, response.usage);
+      console.log(
+        `\x1b[90m  (tokens: ${response.usage.promptTokens} in / ${response.usage.completionTokens} out / ${response.usage.totalTokens} total)\x1b[0m`,
+      );
+    }
+
+    // Save what the LLM said into conversation history.
     const assistantMsg: Message = { role: "assistant", content: response.text };
     if (response.toolCalls.length > 0) {
       assistantMsg.tool_calls = response.toolCalls;
     }
     messages.push(assistantMsg);
 
-    // If the LLM produced text, print it
+    // If the LLM produced text, print it.
     if (response.text) {
       console.log(`\n\x1b[36massistant:\x1b[0m ${response.text}`);
     }
 
-    // ── No tool calls? We're done. ────────────────────────────────────
-    if (response.toolCalls.length === 0) {
-      return;
-    }
-
-    // ── LLM wants to call tools — execute ALL of them in parallel ────
+    // ── Decide what to do based on WHY the model stopped ─────────────
     //
-    // Why is this safe? Because the LLM already handled dependencies.
-    // If tool B needed tool A's output, the LLM would have only returned
-    // tool A in this response, waited for the result, then asked for tool B
-    // in the NEXT loop iteration.
-    //
-    // Everything in a single response.toolCalls is independent by definition.
+    // response.status is the authoritative signal from the provider.
+    // Three possible values:
+    //   "stop"       → model chose to stop, it's done
+    //   "tool_calls" → model wants us to execute tools
+    //   "length"     → model hit max_tokens, response is INCOMPLETE
 
-    // Log what we're about to run
-    for (const tc of response.toolCalls) {
-      console.log(`\n\x1b[33m  [tool] ${tc.name}(\x1b[0m${JSON.stringify(tc.arguments)}\x1b[33m)\x1b[0m`);
+    switch (response.status) {
+
+      case "stop":
+        // Model is done. This is the ONLY clean exit.
+        logTurnSummary(turnTokens);
+        return;
+
+      case "tool_calls": {
+        // ── Execute all requested tools in parallel ─────────────────────
+        //
+        // ASSUMPTION (not guarantee): the model returns only independent
+        // tool calls in a single response. The idea is that if B needs A's
+        // output, a well-behaved model emits A alone, waits for the result,
+        // and only then asks for B in the NEXT iteration.
+        //
+        // Frontier models (GPT-4-class, Claude, Gemini-Pro) usually honor
+        // this. Smaller / weaker / cheaper models sometimes emit dependent
+        // parallel calls anyway. When they do, behavior here is UNDEFINED:
+        // we fire both at once with whatever args the model provided, and
+        // the dependent call sees stale or missing inputs.
+        //
+        // Real fixes if we ever care: run sequentially, or dependency-sort
+        // by inspecting shared argument patterns, or let each tool declare
+        // idempotency and retry the dependent one on mismatch. Not doing
+        // any of that here — this is a documented assumption, not a hidden
+        // landmine.
+
+        // Reset — a successful tool call means the model isn't stuck.
+        continuations = 0;
+
+        for (const tc of response.toolCalls) {
+          console.log(`\n\x1b[33m  [tool] ${tc.name}(\x1b[0m${JSON.stringify(tc.arguments)}\x1b[33m)\x1b[0m`);
+        }
+
+        const results = await Promise.all(
+          response.toolCalls.map((tc) => executeTool(tc.name, tc.arguments))
+        );
+
+        for (let j = 0; j < response.toolCalls.length; j++) {
+          const result = results[j];
+          const tc = response.toolCalls[j];
+
+          // Show a human-readable preview in the terminal. Different color
+          // for errors so the eye catches failures at a glance.
+          const preview = previewResult(result);
+          const color = result.ok ? "\x1b[90m" : "\x1b[31m";
+          console.log(`${color}  → [${tc.name}] ${preview}\x1b[0m`);
+
+          // Feed the STRUCTURED result to the model as JSON. The system
+          // prompt tells it how to read the envelope; giving it typed
+          // errors (not a free-text "Error:" string) is the whole point
+          // of #7.
+          messages.push({
+            role: "tool",
+            content: JSON.stringify(result),
+            tool_call_id: tc.id,
+          });
+        }
+
+        // Loop back to call the LLM again with tool results.
+        break;
+      }
+
+      case "length": {
+        // ── Model got cut off mid-response (hit max_tokens) ────────────
+        //
+        // The model might have been mid-sentence or mid-tool-call JSON.
+        // Old code saw "no tools" and silently returned incomplete output.
+        //
+        // Strategy: inject a continuation prompt and loop back.
+        // Cap retries to avoid burning tokens on endlessly long responses.
+
+        continuations++;
+
+        if (continuations > MAX_CONTINUATIONS) {
+          console.log("\x1b[31m[agent] Response was truncated and max continuations reached. Output may be incomplete.\x1b[0m");
+          logTurnSummary(turnTokens);
+          return;
+        }
+
+        console.log(`\x1b[33m[agent] Response truncated (hit max_tokens). Auto-continuing... (${continuations}/${MAX_CONTINUATIONS})\x1b[0m`);
+
+        messages.push({
+          role: "user",
+          content: "Your previous response was cut off. Please continue from where you stopped.",
+        });
+
+        // Loop back so the model can finish.
+        break;
+      }
     }
-
-    // Run all tools at the same time
-    const results = await Promise.all(
-      response.toolCalls.map((tc) => executeTool(tc.name, tc.arguments))
-    );
-
-    // Add all results to conversation history
-    for (let j = 0; j < response.toolCalls.length; j++) {
-      const result = results[j];
-      const preview = result.length > 200 ? result.slice(0, 200) + "..." : result;
-      console.log(`\x1b[90m  → [${response.toolCalls[j].name}] ${preview}\x1b[0m`);
-
-      messages.push({
-        role: "tool",
-        content: result,
-        tool_call_id: response.toolCalls[j].id,
-      });
-    }
-
-    // Now we loop back to the top — send everything (including tool results)
-    // back to the LLM so it can continue.
   }
 
   console.log("\x1b[31m[agent] Hit max iterations, stopping.\x1b[0m");
+  logTurnSummary(turnTokens);
 }
 
 
-// ── Step 6: The REPL (read-eval-print loop) ─────────────────────────────────
-//
-// Just reads lines from the terminal, feeds them to the agent loop.
+// ── Display helpers ────────────────────────────────────────────────────────
 
-async function main() {
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-    prompt: "\x1b[32myou: \x1b[0m",
-  });
-
-  console.log(`\nAgent ready — ${provider.name}`);
-  console.log("Type a message to chat. Ctrl-C to exit.\n");
-  rl.prompt();
-
-  rl.on("line", async (line: string) => {
-    const trimmed = line.trim();
-    if (!trimmed) { rl.prompt(); return; }
-    if (trimmed === "/quit") process.exit(0);
-    if (trimmed === "/clear") {
-      messages.length = 1; // keep system prompt
-      console.log("Cleared.");
-      rl.prompt();
-      return;
-    }
-
-    // Add user message to history
-    messages.push({ role: "user", content: trimmed });
-
-    try {
-      await agentTurn();
-    } catch (err: unknown) {
-      console.error("\x1b[31m[error]\x1b[0m", err instanceof Error ? err.message : err);
-    }
-
-    rl.prompt();
-  });
-
-  rl.on("close", () => { console.log("\nBye!"); process.exit(0); });
+// Short stringification of a tool result for the terminal. Never dumps the
+// full raw JSON — that's what messages[].content is for.
+function previewResult(result: ToolResult): string {
+  if (result.ok) {
+    return result.data.length > 200 ? result.data.slice(0, 200) + "..." : result.data;
+  }
+  return `${result.error.type}: ${result.error.message}`;
 }
 
-main();
+function logTurnSummary(turn: TokenUsage): void {
+  // Only show the summary if the provider reported anything this turn.
+  if (turn.totalTokens === 0) return;
+  console.log(
+    `\x1b[90m[turn tokens] ${turn.promptTokens} in / ${turn.completionTokens} out / ${turn.totalTokens} total\x1b[0m`,
+  );
+  console.log(
+    `\x1b[90m[session tokens] ${sessionTokens.promptTokens} in / ${sessionTokens.completionTokens} out / ${sessionTokens.totalTokens} total\x1b[0m`,
+  );
+}
