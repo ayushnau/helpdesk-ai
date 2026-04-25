@@ -139,12 +139,29 @@ export async function agentTurn(): Promise<void> {
     // ── Decide what to do based on WHY the model stopped ─────────────
     //
     // response.status is the authoritative signal from the provider.
-    // Three possible values:
+    // Four possible values:
     //   "stop"       → model chose to stop, it's done
     //   "tool_calls" → model wants us to execute tools
     //   "length"     → model hit max_tokens, response is INCOMPLETE
+    //   "error"      → provider failed (auth, rate limit, bad request, etc.)
 
     switch (response.status) {
+
+      case "error": {
+        const err = response.error!;
+        console.log(`\n\x1b[31m[agent] LLM API error (${err.type}): ${err.message}\x1b[0m`);
+
+        if (err.type === "auth") {
+          console.log("\x1b[31m[agent] Check your API key and try again.\x1b[0m");
+        } else if (err.type === "context_length_exceeded") {
+          console.log("\x1b[31m[agent] Conversation too long. Use /clear to reset.\x1b[0m");
+        } else if (err.type === "rate_limited") {
+          console.log("\x1b[33m[agent] Rate limited after retries. Wait a moment and try again.\x1b[0m");
+        }
+
+        logTurnSummary(turnTokens);
+        return;
+      }
 
       case "stop":
         // Model is done. This is the ONLY clean exit.
@@ -152,26 +169,6 @@ export async function agentTurn(): Promise<void> {
         return;
 
       case "tool_calls": {
-        // ── Execute all requested tools in parallel ─────────────────────
-        //
-        // ASSUMPTION (not guarantee): the model returns only independent
-        // tool calls in a single response. The idea is that if B needs A's
-        // output, a well-behaved model emits A alone, waits for the result,
-        // and only then asks for B in the NEXT iteration.
-        //
-        // Frontier models (GPT-4-class, Claude, Gemini-Pro) usually honor
-        // this. Smaller / weaker / cheaper models sometimes emit dependent
-        // parallel calls anyway. When they do, behavior here is UNDEFINED:
-        // we fire both at once with whatever args the model provided, and
-        // the dependent call sees stale or missing inputs.
-        //
-        // Real fixes if we ever care: run sequentially, or dependency-sort
-        // by inspecting shared argument patterns, or let each tool declare
-        // idempotency and retry the dependent one on mismatch. Not doing
-        // any of that here — this is a documented assumption, not a hidden
-        // landmine.
-
-        // Reset — a successful tool call means the model isn't stuck.
         continuations = 0;
 
         for (const tc of response.toolCalls) {

@@ -70,6 +70,7 @@ interface Tool<T = unknown> {
   name: string;
   description: string;
   inputSchema: ZodType<T>;
+  outputSchema?: ZodType;
   execute: (input: T) => Promise<string>;
 }
 
@@ -84,6 +85,7 @@ const readFile: Tool<{ path: string }> = {
   inputSchema: z.object({
     path: z.string().min(1).describe("Absolute or relative file path"),
   }),
+  outputSchema: z.string().min(0),
   async execute({ path: p }) {
     const content = fs.readFileSync(path.resolve(p), "utf-8");
     // Truncate: we don't want a 10 MB log file to blow the context window.
@@ -100,6 +102,7 @@ const writeFile: Tool<{ path: string; content: string }> = {
     path: z.string().min(1).describe("File path to write"),
     content: z.string().describe("Content to write"),
   }),
+  outputSchema: z.string().min(1),
   async execute({ path: p, content }) {
     const filePath = path.resolve(p);
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -114,6 +117,7 @@ const listDirectory: Tool<{ path?: string }> = {
   inputSchema: z.object({
     path: z.string().optional().describe("Directory path (defaults to cwd)"),
   }),
+  outputSchema: z.string().min(1),
   async execute({ path: p }) {
     const dirPath = p && p.length > 0 ? p : ".";
     const entries = fs.readdirSync(path.resolve(dirPath), { withFileTypes: true });
@@ -124,10 +128,6 @@ const listDirectory: Tool<{ path?: string }> = {
   },
 };
 
-// Replacement for the deleted run_command. Narrow, arg-validated, uses
-// execFile (NOT execSync) so the query is never interpreted by a shell —
-// closing the injection vector where a crafted query spawns arbitrary
-// commands via $(...), `...`, or shell redirection.
 const searchText: Tool<{ query: string; path?: string }> = {
   name: "search_text",
   description:
@@ -137,6 +137,7 @@ const searchText: Tool<{ query: string; path?: string }> = {
     query: z.string().min(1).describe("Literal text to search for"),
     path: z.string().optional().describe("Directory or file to search in (defaults to cwd)"),
   }),
+  outputSchema: z.string().min(1),
   async execute({ query, path: p }) {
     const target = p && p.length > 0 ? p : ".";
     try {
@@ -154,37 +155,18 @@ const searchText: Tool<{ query: string; path?: string }> = {
   },
 };
 
-// The registry. Order matters only for display purposes.
 const TOOL_REGISTRY: Tool<any>[] = [readFile, writeFile, listDirectory, searchText];
 
-// ── What the LLM sees ──────────────────────────────────────────────────────
-//
-// Derive the JSON-Schema `parameters` field from the Zod schema. This is
-// the single source of truth — if we ever change a tool's inputs, both
-// the validator and the LLM-visible schema update together.
 
 export const tools: ToolDef[] = TOOL_REGISTRY.map((t) => ({
   name: t.name,
   description: t.description,
-  // Zod v4 ships first-party JSON-Schema conversion — single source of
-  // truth: the same ZodType we validate with becomes the schema the LLM
-  // sees. target: "openai" strips features OpenAI doesn't support.
-  parameters: z.toJSONSchema(t.inputSchema, { target: "draft-7" }) as ToolDef["parameters"],
+  parameters: z.toJSONSchema(t.inputSchema, { target: "draft-7" }) as ToolDef["parameters"], // draft 7 supported widely by llms
 }));
 
 // Lookup table for fast name → tool resolution during execution.
 const TOOLS_BY_NAME = new Map(TOOL_REGISTRY.map((t) => [t.name, t]));
 
-// ── Tool execution ─────────────────────────────────────────────────────────
-//
-// Boundary rules:
-//   1. Resolve by name — unknown tools return a typed error, never throw.
-//   2. Validate args with Zod — invalid input returns validation_error.
-//   3. Run execute() — classify thrown errors into typed categories.
-//
-// Nothing inside this function is allowed to throw to the caller. The
-// agent loop assumes every tool call produces a ToolResult it can stuff
-// into the conversation history.
 
 export async function executeTool(
   name: string,
@@ -218,6 +200,21 @@ export async function executeTool(
 
   try {
     const data = await tool.execute(parsed.data);
+
+    if (tool.outputSchema) {
+      const outputParsed = tool.outputSchema.safeParse(data);
+      if (!outputParsed.success) {
+        return {
+          ok: false,
+          error: {
+            type: "execution_error",
+            message: `Tool "${name}" returned invalid output: ${formatZodError(outputParsed.error)}`,
+            details: outputParsed.error.issues,
+          },
+        };
+      }
+    }
+
     return { ok: true, data };
   } catch (err: unknown) {
     return { ok: false, error: classifyError(err) };

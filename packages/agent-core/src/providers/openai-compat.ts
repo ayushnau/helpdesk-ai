@@ -1,20 +1,5 @@
-import type { Provider, ProviderResponse, Message, ToolDef, ToolCall, TokenUsage } from "./types.js";
+import type { Provider, ProviderResponse, ProviderError, ProviderErrorType, Message, ToolDef, ToolCall, TokenUsage } from "./types.js";
 
-// ── OpenAI-compatible provider ──────────────────────────────────────────────
-//
-// WHY ONE FILE INSTEAD OF MANY?
-//
-// Ollama, Gemini, OpenAI, Groq, Together, LMStudio — they all speak the
-// same REST API format: POST /v1/chat/completions with the same JSON shape.
-// This is called the "OpenAI-compatible" format and it's become a standard.
-//
-// The only things that differ between providers:
-//   1. The base URL
-//   2. Whether they need an API key (and how to send it)
-//   3. The model name
-//
-// So instead of duplicating 100 lines per provider, we write ONE function
-// that takes { url, apiKey, model } and works for all of them.
 
 export interface OpenAICompatConfig {
   name: string;     // display name like "ollama/qwen2.5:7b"
@@ -79,14 +64,34 @@ export function createOpenAICompatProvider(config: OpenAICompatConfig): Provider
       headers["Authorization"] = `Bearer ${config.apiKey}`;
     }
 
-    const res = await fetchWithRetry(
-      url,
-      { method: "POST", headers, body: JSON.stringify(body) },
-      config.name,
-    );
+    // ── Call the API ───────────────────────────────────────────────────
+    //
+    // Two failure modes:
+    //   1. Network-level (DNS, TCP, TLS) — fetchWithRetry throws after
+    //      exhausting retries. We catch it below.
+    //   2. HTTP-level (4xx/5xx) — fetchWithRetry returns the response
+    //      after exhausting retries for retriable codes, or immediately
+    //      for non-retriable codes. We classify and return structured.
+
+    let res: Response;
+    try {
+      res = await fetchWithRetry(
+        url,
+        { method: "POST", headers, body: JSON.stringify(body) },
+        config.name,
+      );
+    } catch (err) {
+      // Network failure after all retries exhausted.
+      return errorResponse("network", err instanceof Error ? err.message : String(err));
+    }
 
     if (!res.ok) {
-      throw new Error(`${config.name} error ${res.status}: ${await res.text()}`);
+      const body = await res.text();
+      return errorResponse(
+        classifyHttpError(res.status, body),
+        `${config.name} HTTP ${res.status}: ${body}`,
+        res.status,
+      );
     }
 
     // ── Parse response ──────────────────────────────────────────────────
@@ -102,7 +107,9 @@ export function createOpenAICompatProvider(config: OpenAICompatConfig): Provider
 
     const json = await res.json() as any;
     const choice = json.choices?.[0];
-    if (!choice) throw new Error(`No response from ${config.name}`);
+    if (!choice) {
+      return errorResponse("unknown", `No choices in response from ${config.name}`);
+    }
 
     const msg = choice.message;
 
@@ -144,7 +151,6 @@ export function createOpenAICompatProvider(config: OpenAICompatConfig): Provider
   return { name: config.name, chat };
 }
 
-// ── Format a single message to OpenAI shape ─────────────────────────────────
 
 function formatMessage(m: Message) {
   // Assistant message that includes tool calls
@@ -235,4 +241,55 @@ function parseRetryAfter(header: string | null): number | null {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// ── Error classification ───────────────────────────────────────────────────
+
+// Build a ProviderResponse with status "error". Keeps the happy path clean.
+function errorResponse(
+  type: ProviderErrorType,
+  message: string,
+  statusCode?: number,
+): ProviderResponse {
+  return {
+    text: "",
+    toolCalls: [],
+    status: "error",
+    usage: null,
+    error: { type, message, statusCode },
+  };
+}
+
+// Map HTTP status + body to a typed error category.
+//
+// Most OpenAI-compatible APIs return structured error JSON:
+//   { "error": { "message": "...", "type": "...", "code": "..." } }
+//
+// error.code is machine-readable and the most reliable signal. We check
+// it first, then fall back to regex on the raw body for providers that
+// don't follow the convention.
+function classifyHttpError(status: number, body: string): ProviderErrorType {
+  if (status === 401 || status === 403) return "auth";
+  if (status === 429) return "rate_limited";
+  if (status >= 500) return "server_error";
+
+  if (status === 400 || status === 422) {
+    // Try structured error first — parse once, check the code field.
+    try {
+      const json = JSON.parse(body);
+      const code = json?.error?.code ?? "";
+      if (code === "context_length_exceeded" || code === "model_max_length") {
+        return "context_length_exceeded";
+      }
+    } catch(err) {
+      console.error(err, "handling though the fallback")
+    }
+
+    if (/context.length|max.tokens|too.long|token.limit/i.test(body)) {
+      return "context_length_exceeded";
+    }
+    return "bad_request";
+  }
+
+  return "unknown";
 }

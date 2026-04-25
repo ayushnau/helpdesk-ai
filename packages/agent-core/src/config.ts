@@ -1,17 +1,9 @@
-import type { Provider } from "./providers/index.js";
-import { createOpenAICompatProvider } from "./providers/index.js";
 import dotenv from "dotenv";
 dotenv.config();
 
-// ── Provider selection ─────────────────────────────────────────────────────
-//
-// All these providers speak the SAME "OpenAI-compatible" API format.
-// Only 3 things change between them: URL, API key, model name.
-//
-//   bun run dev                        → ollama / qwen2.5:7b  (local)
-//   bun run dev ollama mistral         → ollama / mistral     (local)
-//   bun run dev gemini                 → gemini-2.0-flash     (cloud)
-//   bun run dev groq                   → llama-3.3-70b        (cloud)
+import type { Provider } from "./providers/index.js";
+import { createOpenAICompatProvider } from "./providers/index.js";
+
 
 function requireEnv(name: string): string {
   const val = process.env[name];

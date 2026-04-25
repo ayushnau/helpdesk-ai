@@ -42,12 +42,29 @@ export interface TokenUsage {
   totalTokens: number;
 }
 
+
+export type ProviderErrorType =
+  | "auth"                      // 401/403 — wrong or expired API key
+  | "bad_request"               // 400/422 — malformed request body
+  | "context_length_exceeded"   // special case of 400 — history too long
+  | "rate_limited"              // 429 — exhausted retries
+  | "server_error"              // 5xx — exhausted retries
+  | "network"                   // DNS, ECONNRESET, TLS, timeout
+  | "unknown";
+
+export interface ProviderError {
+  type: ProviderErrorType;
+  message: string;
+  statusCode?: number;          // HTTP status when available
+}
+
 // What we get back from the LLM after one API call
 export interface ProviderResponse {
   text: string;           // what the LLM said (may be empty if it only called tools)
   toolCalls: ToolCall[];  // tools it wants us to run (empty if none)
-  status: "stop" | "tool_calls" | "length";
+  status: "stop" | "tool_calls" | "length" | "error";
   usage: TokenUsage | null;
+  error?: ProviderError;  // populated only when status === "error"
 }
 
 // The one method every provider must implement
