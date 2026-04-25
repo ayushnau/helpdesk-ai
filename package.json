@@ -10,7 +10,8 @@
     "dev": "turbo run dev",
     "lint": "turbo run lint",
     "test": "turbo run test",
-    "typecheck": "turbo run typecheck"
+    "typecheck": "turbo run typecheck",
+    "agent": "bun run apps/api/src/main.ts"
   },
   "packageManager": "bun@1.2.4",
   "devDependencies": {
