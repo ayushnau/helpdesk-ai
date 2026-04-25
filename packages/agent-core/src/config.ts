@@ -12,9 +12,9 @@ function requireEnv(name: string): string {
 }
 
 export function pickProvider(): Provider {
-  const [, , backend, model] = process.argv;
+  const [, , llm, model] = process.argv;
 
-  switch (backend) {
+  switch (llm) {
     case "gemini":
       return createOpenAICompatProvider({
         name: `gemini/${model || "gemini-2.0-flash"}`,

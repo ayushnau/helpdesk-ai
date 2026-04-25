@@ -64,15 +64,6 @@ export function createOpenAICompatProvider(config: OpenAICompatConfig): Provider
       headers["Authorization"] = `Bearer ${config.apiKey}`;
     }
 
-    // ── Call the API ───────────────────────────────────────────────────
-    //
-    // Two failure modes:
-    //   1. Network-level (DNS, TCP, TLS) — fetchWithRetry throws after
-    //      exhausting retries. We catch it below.
-    //   2. HTTP-level (4xx/5xx) — fetchWithRetry returns the response
-    //      after exhausting retries for retriable codes, or immediately
-    //      for non-retriable codes. We classify and return structured.
-
     let res: Response;
     try {
       res = await fetchWithRetry(
@@ -93,17 +84,6 @@ export function createOpenAICompatProvider(config: OpenAICompatConfig): Provider
         res.status,
       );
     }
-
-    // ── Parse response ──────────────────────────────────────────────────
-    //
-    // Response shape (same for ALL OpenAI-compatible APIs):
-    // {
-    //   choices: [{
-    //     message: { content: "...", tool_calls: [...] },
-    //     finish_reason: "stop" | "tool_calls" | "length"
-    //   }],
-    //   usage: { prompt_tokens, completion_tokens, total_tokens }
-    // }
 
     const json = await res.json() as any;
     const choice = json.choices?.[0];
