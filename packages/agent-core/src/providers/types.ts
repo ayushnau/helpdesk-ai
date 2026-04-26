@@ -67,8 +67,14 @@ export interface ProviderResponse {
   error?: ProviderError;  // populated only when status === "error"
 }
 
-// The one method every provider must implement
+export type StreamEvent =
+  | { type: "text";      token: string }
+  | { type: "tool_call"; toolCall: ToolCall }
+  | { type: "done";      usage: TokenUsage | null; finishReason: ProviderResponse["status"] }
+  | { type: "error";     error: ProviderError };
+
 export interface Provider {
   name: string;
   chat(messages: Message[], tools: ToolDef[]): Promise<ProviderResponse>;
+  chatStream?(messages: Message[], tools: ToolDef[]): AsyncGenerator<StreamEvent>;
 }

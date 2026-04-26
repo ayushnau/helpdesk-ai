@@ -1,4 +1,4 @@
-import type { Provider, ProviderResponse, ProviderError, ProviderErrorType, Message, ToolDef, ToolCall, TokenUsage } from "./types.js";
+import type { Provider, ProviderResponse, ProviderError, ProviderErrorType, Message, ToolDef, ToolCall, TokenUsage, StreamEvent } from "./types.js";
 
 
 export interface OpenAICompatConfig {
@@ -7,29 +7,6 @@ export interface OpenAICompatConfig {
   model: string;    // e.g. "qwen2.5:7b"
   apiKey?: string;  // optional — Ollama doesn't need one, Gemini does
 }
-
-// ── Retry policy ────────────────────────────────────────────────────────────
-//
-// Transient failures (rate limits, overloaded upstreams, flaky networks) are
-// the #1 reason production agents die. A single un-retried 429 takes down
-// the whole conversation. We retry with FULL JITTER exponential backoff
-// because synchronized retries from multiple clients create thundering
-// herds — jitter spreads them out.
-//
-// What we retry:
-//   429 Too Many Requests  — rate limited, the API is explicitly asking us to wait
-//   500/502/503/504        — upstream is unhealthy, probably transient
-//   network errors         — DNS, TCP reset, TLS handshake, etc.
-//
-// What we DON'T retry:
-//   400 Bad Request        — our request is malformed, retrying won't fix it
-//   401/403                — auth problem, retrying will fail the same way
-//   404                    — wrong URL/model, retrying is pointless
-//   422                    — semantic error in request body
-//   context_length_exceeded — retrying burns the same tokens; caller must trim
-//
-// We honor Retry-After when the server tells us how long to wait (429s and
-// some 503s include it). Otherwise we fall back to jittered backoff.
 
 const MAX_ATTEMPTS = 5;
 const BASE_DELAY_MS = 500;
@@ -128,12 +105,147 @@ export function createOpenAICompatProvider(config: OpenAICompatConfig): Provider
     return { text: msg.content || "", toolCalls, status, usage };
   }
 
-  return { name: config.name, chat };
+
+  async function* chatStream(messages: Message[], tools: ToolDef[]): AsyncGenerator<StreamEvent> {
+    const body: Record<string, unknown> = {
+      model: config.model,
+      stream: true,
+      stream_options: { include_usage: true },
+      messages: messages.map(formatMessage),
+    };
+
+    if (tools.length > 0) {
+      body.tools = tools.map((t) => ({
+        type: "function",
+        function: { name: t.name, description: t.description, parameters: t.parameters },
+      }));
+    }
+
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (config.apiKey) {
+      headers["Authorization"] = `Bearer ${config.apiKey}`;
+    }
+
+    let res: Response;
+    try {
+      res = await fetchWithRetry(url, { method: "POST", headers, body: JSON.stringify(body) }, config.name);
+    } catch (err) {
+      yield { type: "error", error: { type: "network", message: err instanceof Error ? err.message : String(err) } };
+      return;
+    }
+
+    if (!res.ok) {
+      const text = await res.text();
+      yield { type: "error", error: { type: classifyHttpError(res.status, text), message: `${config.name} HTTP ${res.status}: ${text}`, statusCode: res.status } };
+      return;
+    }
+
+    if (!res.body) {
+      yield { type: "error", error: { type: "unknown", message: "Response body is null — streaming not supported by this provider" } };
+      return;
+    }
+
+    const partials = new Map<number, { id: string; name: string; arguments: string }>();
+    let usage: TokenUsage | null = null;
+    let finishReason: ProviderResponse["status"] = "stop";
+
+    try {
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";  // SSE lines can be split across chunks
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+
+        const lines = buffer.split("\n");
+        buffer = lines.pop()!;
+
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue;
+
+          const payload = line.slice(6);  // strip "data: " prefix
+
+          if (payload === "[DONE]") continue;
+
+          let chunk: any;
+          try {
+            chunk = JSON.parse(payload);
+          } catch {
+            continue;
+          }
+
+          if (chunk.usage) {
+            usage = {
+              promptTokens: chunk.usage.prompt_tokens ?? 0,
+              completionTokens: chunk.usage.completion_tokens ?? 0,
+              totalTokens: chunk.usage.total_tokens ?? 0,
+            };
+          }
+
+          const choice = chunk.choices?.[0];
+          if (!choice) continue;
+
+          if (choice.finish_reason) {
+            if (choice.finish_reason === "tool_calls" || partials.size > 0) {
+              finishReason = "tool_calls";
+            } else if (choice.finish_reason === "length") {
+              finishReason = "length";
+            } else {
+              finishReason = "stop";
+            }
+          }
+
+          const delta = choice.delta;
+          if (!delta) continue;
+
+          if (delta.content) {
+            yield { type: "text", token: delta.content };
+          }
+
+          if (delta.tool_calls) {
+            for (const tc of delta.tool_calls) {
+              const idx = tc.index ?? 0;
+              if (!partials.has(idx)) {
+                partials.set(idx, {
+                  id: tc.id || "",
+                  name: tc.function?.name || "",
+                  arguments: "",
+                });
+              }
+              const partial = partials.get(idx)!;
+              if (tc.id) partial.id = tc.id;
+              if (tc.function?.name) partial.name = tc.function.name;
+              if (tc.function?.arguments) partial.arguments += tc.function.arguments;
+            }
+          }
+        }
+      }
+    } catch (err) {
+      yield { type: "error", error: { type: "network", message: `Stream interrupted: ${err instanceof Error ? err.message : String(err)}` } };
+      return;
+    }
+
+    for (const [, partial] of partials) {
+      let args: Record<string, unknown> = {};
+      try {
+        args = JSON.parse(partial.arguments);
+      } catch {
+        args = { _raw: partial.arguments };
+      }
+      yield { type: "tool_call", toolCall: { id: partial.id, name: partial.name, arguments: args } };
+    }
+
+    yield { type: "done", usage, finishReason };
+  }
+
+  return { name: config.name, chat, chatStream };
 }
 
 
 function formatMessage(m: Message) {
-  // Assistant message that includes tool calls
   if (m.role === "assistant" && m.tool_calls?.length) {
     return {
       role: "assistant",
@@ -145,15 +257,12 @@ function formatMessage(m: Message) {
       })),
     };
   }
-  // Tool result — needs the tool_call_id so the LLM knows which call it answers
   if (m.role === "tool") {
     return { role: "tool", content: m.content, tool_call_id: m.tool_call_id };
   }
-  // System, user, or plain assistant
   return { role: m.role, content: m.content };
 }
 
-// ── Retry helpers ───────────────────────────────────────────────────────────
 
 async function fetchWithRetry(
   url: string,
@@ -166,15 +275,12 @@ async function fetchWithRetry(
     try {
       const res = await fetch(url, init);
 
-      // Not an error, or a non-retriable error → return to caller as-is.
       if (res.ok || !RETRIABLE_STATUS.has(res.status)) {
         return res;
       }
 
-      // Retriable status. Last attempt? Let the caller see the final response.
       if (attempt === MAX_ATTEMPTS - 1) return res;
 
-      // Server hinted how long to wait — honor it. Otherwise full jitter.
       const hinted = parseRetryAfter(res.headers.get("retry-after"));
       const delay = hinted ?? jitteredBackoff(attempt);
       console.log(
@@ -182,7 +288,6 @@ async function fetchWithRetry(
       );
       await sleep(delay);
     } catch (err) {
-      // Network-level failure (DNS, ECONNRESET, TLS, timeout). Treat as retriable.
       lastError = err;
       if (attempt === MAX_ATTEMPTS - 1) throw err;
 
@@ -195,21 +300,14 @@ async function fetchWithRetry(
     }
   }
 
-  // Should be unreachable — every path above either returns or throws.
   throw lastError ?? new Error(`${providerName}: retry loop exhausted`);
 }
 
-// Full jitter: sleep = random(0, min(cap, base * 2^attempt)).
-// Full jitter beats equal / decorrelated jitter for avoiding thundering
-// herds when many clients retry together. See AWS Architecture Blog:
-// "Exponential Backoff And Jitter".
 function jitteredBackoff(attempt: number): number {
   const exp = Math.min(MAX_DELAY_MS, BASE_DELAY_MS * 2 ** attempt);
   return Math.floor(Math.random() * exp);
 }
 
-// Retry-After can be either a number of seconds ("5") or an HTTP-date
-// ("Wed, 21 Oct 2015 07:28:00 GMT"). Parse both, return ms or null.
 function parseRetryAfter(header: string | null): number | null {
   if (!header) return null;
   const seconds = Number(header);
@@ -223,9 +321,6 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-// ── Error classification ───────────────────────────────────────────────────
-
-// Build a ProviderResponse with status "error". Keeps the happy path clean.
 function errorResponse(
   type: ProviderErrorType,
   message: string,
@@ -240,21 +335,12 @@ function errorResponse(
   };
 }
 
-// Map HTTP status + body to a typed error category.
-//
-// Most OpenAI-compatible APIs return structured error JSON:
-//   { "error": { "message": "...", "type": "...", "code": "..." } }
-//
-// error.code is machine-readable and the most reliable signal. We check
-// it first, then fall back to regex on the raw body for providers that
-// don't follow the convention.
 function classifyHttpError(status: number, body: string): ProviderErrorType {
   if (status === 401 || status === 403) return "auth";
   if (status === 429) return "rate_limited";
   if (status >= 500) return "server_error";
 
   if (status === 400 || status === 422) {
-    // Try structured error first — parse once, check the code field.
     try {
       const json = JSON.parse(body);
       const code = json?.error?.code ?? "";

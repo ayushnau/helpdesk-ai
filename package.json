@@ -16,5 +16,8 @@
   "packageManager": "bun@1.2.4",
   "devDependencies": {
     "turbo": "^2"
+  },
+  "dependencies": {
+    "razorpay": "^2.9.6"
   }
 }

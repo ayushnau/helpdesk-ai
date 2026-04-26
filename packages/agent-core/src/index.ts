@@ -11,6 +11,7 @@ export type {
   ToolDef,
   ToolCall,
   TokenUsage,
+  StreamEvent,
   OpenAICompatConfig,
 } from "./providers/index.js";
 export { createOpenAICompatProvider } from "./providers/index.js";
