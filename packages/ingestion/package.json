@@ -1,0 +1,23 @@
+{
+  "name": "@helpdesk-ai/ingestion",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "main": "./src/ingest.ts",
+  "scripts": {
+    "ingest": "bun run src/ingest.ts",
+    "embed": "bun run src/embed.ts",
+    "build": "tsc",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@helpdesk-ai/shared": "workspace:*",
+    "@helpdesk-ai/types": "workspace:*",
+    "gray-matter": "^4.0.3",
+    "pg": "^8.16.0"
+  },
+  "devDependencies": {
+    "typescript": "^6.0.3",
+    "@types/node": "^25.6.0"
+  }
+}

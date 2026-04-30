@@ -1,0 +1,22 @@
+{
+  "name": "@helpdesk-ai/retrieval",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": {
+    "search": "bun run src/search.ts",
+    "build": "tsc",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@helpdesk-ai/shared": "workspace:*",
+    "@helpdesk-ai/types": "workspace:*",
+    "pg": "^8.16.0"
+  },
+  "devDependencies": {
+    "typescript": "^6.0.3",
+    "@types/node": "^25.6.0"
+  }
+}

@@ -11,7 +11,10 @@
     "lint": "turbo run lint",
     "test": "turbo run test",
     "typecheck": "turbo run typecheck",
-    "agent": "bun run apps/api/src/main.ts"
+    "agent": "bun run apps/api/src/main.ts",
+    "chunks": "bun run packages/ingestion/src/ingest.ts",
+    "embed": "bun run packages/ingestion/src/embed.ts",
+    "search": "bun run packages/retrieval/src/search.ts"
   },
   "packageManager": "bun@1.2.4",
   "devDependencies": {
