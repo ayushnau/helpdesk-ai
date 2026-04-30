@@ -105,13 +105,14 @@ async function insertBatch(
       const embeddingStr = `[${embedding.join(",")}]`;
 
       const result = await client.query(
-        `INSERT INTO chunks (id, tenant_id, source_file, doc_title, section_path, content, doc_type, embedding)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        `INSERT INTO chunks (id, tenant_id, source_file, doc_title, section_path, content, doc_type, embedding, search_vector)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, to_tsvector('english', $4 || ' ' || $6))
          ON CONFLICT (id) DO UPDATE SET
            content = EXCLUDED.content,
            section_path = EXCLUDED.section_path,
            doc_title = EXCLUDED.doc_title,
-           embedding = EXCLUDED.embedding
+           embedding = EXCLUDED.embedding,
+           search_vector = to_tsvector('english', EXCLUDED.doc_title || ' ' || EXCLUDED.content)
          RETURNING (xmax = 0) AS is_insert`,
         [
           chunk.id,
