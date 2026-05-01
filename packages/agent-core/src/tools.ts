@@ -3,6 +3,7 @@ import * as path from "path";
 import { execFileSync } from "child_process";
 import { z, ZodError, ZodType } from "zod";
 import type { ToolDef } from "./providers/index.js";
+import { retrieveChunks } from "@helpdesk-ai/retrieval";
 
 // ── Tool system ────────────────────────────────────────────────────────────
 //
@@ -155,7 +156,33 @@ const searchText: Tool<{ query: string; path?: string }> = {
   },
 };
 
-const TOOL_REGISTRY: Tool<any>[] = [readFile, writeFile, listDirectory, searchText];
+const searchKnowledge: Tool<{ query: string; tenant_id?: string }> = {
+  name: "search_knowledge",
+  description:
+    "Search the knowledge base for relevant documentation. Use this when the user asks a question " +
+    "about the product, features, setup guides, or troubleshooting. Returns the most relevant doc chunks.",
+  inputSchema: z.object({
+    query: z.string().min(1).describe("The search query — rephrase the user's question into keywords for best results"),
+    tenant_id: z.string().optional().describe("Tenant ID to scope the search (defaults to 'posthog')"),
+  }),
+  async execute({ query, tenant_id }) {
+    const tenantId = tenant_id || "posthog";
+    const chunks = await retrieveChunks(query, tenantId);
+
+    if (chunks.length === 0) {
+      return "No relevant documentation found for this query.";
+    }
+
+    // Format as numbered results with source context so the LLM can cite them
+    return chunks
+      .map((chunk, i) =>
+        `[${i + 1}] (score: ${chunk.similarity.toFixed(4)}) ${chunk.section_path}\n${chunk.content}`
+      )
+      .join("\n\n---\n\n");
+  },
+};
+
+const TOOL_REGISTRY: Tool<any>[] = [readFile, writeFile, listDirectory, searchText, searchKnowledge];
 
 
 export const tools: ToolDef[] = TOOL_REGISTRY.map((t) => ({

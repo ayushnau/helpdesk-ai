@@ -11,6 +11,7 @@
     "dev": "tsc --watch"
   },
   "dependencies": {
+    "@helpdesk-ai/retrieval": "workspace:*",
     "dotenv": "^17.4.2",
     "zod": "^4.3.6",
     "zod-to-json-schema": "^3.25.2"
