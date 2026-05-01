@@ -12,6 +12,7 @@
     "test": "turbo run test",
     "typecheck": "turbo run typecheck",
     "agent": "bun run apps/api/src/main.ts",
+    "agent:mastra": "bun run apps/mastra-agent/src/main.ts",
     "chunks": "bun run packages/ingestion/src/ingest.ts",
     "embed": "bun run packages/ingestion/src/embed.ts",
     "search": "bun run packages/retrieval/src/search.ts"
