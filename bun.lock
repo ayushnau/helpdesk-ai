@@ -47,6 +47,7 @@
       "dependencies": {
         "@helpdesk-ai/retrieval": "workspace:*",
         "dotenv": "^17.4.2",
+        "js-tiktoken": "^1.0.21",
         "zod": "^4.3.6",
         "zod-to-json-schema": "^3.25.2",
       },

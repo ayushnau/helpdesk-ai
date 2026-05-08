@@ -2,6 +2,7 @@ export { messages, agentTurn, clearConversation } from "./agent.js";
 export { provider, pickProvider } from "./config.js";
 export { tools, executeTool } from "./tools.js";
 export { isShuttingDown, registerShutdownHandlers } from "./shutdown.js";
+export { countTokens, compressIfNeeded, type MemoryState } from "./memory.js";
 
 // Re-export types so consumers don't reach into providers/
 export type {

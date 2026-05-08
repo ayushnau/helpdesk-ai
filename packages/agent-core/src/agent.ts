@@ -2,6 +2,7 @@ import type { Message, TokenUsage, ToolCall, ProviderResponse, ProviderError } f
 import { provider } from "./config.js";
 import { tools, executeTool, type ToolResult } from "./tools.js";
 import { isShuttingDown } from "./shutdown.js";
+import { compressIfNeeded, type MemoryState } from "./memory.js";
 
 
 export const messages: Message[] = [
@@ -26,10 +27,19 @@ When ok is false, read the error type and message, correct your inputs, and retr
   },
 ];
 
+// Tracks compressed conversation history across turns
+const memoryState: MemoryState = { summary: null };
+
+// Context window size for the model — used to decide when to compress.
+// Most local models (Ollama) default to 8192. Cloud models are larger.
+// Can be overridden via env var.
+const MAX_CONTEXT_TOKENS = parseInt(process.env.MAX_CONTEXT_TOKENS || "8192", 10);
+
 // Wipe the conversation but keep the system prompt. Owned here so the
 // "index 0 is the system message" invariant never leaks into the REPL.
 export function clearConversation(): void {
   messages.length = 1;
+  memoryState.summary = null; // reset summary when conversation is cleared
   sessionTokens = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 }
 
@@ -60,6 +70,11 @@ export async function agentTurn(): Promise<void> {
       console.log("\x1b[33m[agent] Interrupted, stopping gracefully.\x1b[0m");
       return;
     }
+
+    // Compress conversation history if approaching context window limit.
+    // This must happen BEFORE the LLM call — once we're over the limit, the
+    // call will fail with context_length_exceeded.
+    await compressIfNeeded(messages, memoryState, provider, MAX_CONTEXT_TOKENS);
 
     console.log(`\x1b[90m  (calling ${provider.name}...)\x1b[0m`);
 
