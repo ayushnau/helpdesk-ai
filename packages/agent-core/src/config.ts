@@ -12,14 +12,17 @@ function requireEnv(name: string): string {
 }
 
 export function pickProvider(): Provider {
-  const [, , llm, model] = process.argv;
+  // Support both CLI args (local dev) and env vars (deployment)
+  const [, , cliLlm, cliModel] = process.argv;
+  const llm = cliLlm || process.env.LLM_PROVIDER || "ollama";
+  const model = cliModel || process.env.LLM_MODEL || undefined;
 
   switch (llm) {
     case "gemini":
       return createOpenAICompatProvider({
-        name: `gemini/${model || "gemini-2.0-flash"}`,
+        name: `gemini/${model || "gemini-2.5-flash-lite"}`,
         baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
-        model: model || "gemini-2.0-flash",
+        model: model || "gemini-2.5-flash-lite",
         apiKey: requireEnv("GEMINI_API_KEY"),
       });
 
@@ -35,7 +38,7 @@ export function pickProvider(): Provider {
     default:
       return createOpenAICompatProvider({
         name: `ollama/${model || "qwen2.5:7b"}`,
-        baseUrl: "http://localhost:11434/v1",
+        baseUrl: process.env.OLLAMA_HOST || "http://localhost:11434/v1",
         model: model || "qwen2.5:7b",
       });
   }
@@ -44,3 +47,28 @@ export function pickProvider(): Provider {
 // Singleton: resolved once at module load so the agent loop and the REPL
 // share the exact same provider instance instead of constructing two.
 export const provider = pickProvider();
+
+/**
+ * Create a provider from a client-supplied API key.
+ * Used when a demo user provides their own key via the UI.
+ * Falls back to the singleton provider if no key is provided.
+ */
+export function providerFromClientKey(opts: { geminiKey?: string; groqKey?: string }): Provider | null {
+  if (opts.geminiKey) {
+    return createOpenAICompatProvider({
+      name: "gemini/gemini-2.5-flash-lite",
+      baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
+      model: "gemini-2.5-flash-lite",
+      apiKey: opts.geminiKey,
+    });
+  }
+  if (opts.groqKey) {
+    return createOpenAICompatProvider({
+      name: "groq/llama-3.3-70b-versatile",
+      baseUrl: "https://api.groq.com/openai/v1",
+      model: "llama-3.3-70b-versatile",
+      apiKey: opts.groqKey,
+    });
+  }
+  return null;
+}

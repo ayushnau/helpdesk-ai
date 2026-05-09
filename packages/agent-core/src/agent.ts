@@ -1,14 +1,17 @@
-import type { Message, TokenUsage, ToolCall, ProviderResponse, ProviderError } from "./providers/index.js";
-import { provider } from "./config.js";
+import type { Message, TokenUsage, ToolCall, ProviderResponse, ProviderError, Provider } from "./providers/index.js";
+import { provider as defaultProvider } from "./config.js";
 import { tools, executeTool, type ToolResult } from "./tools.js";
 import { isShuttingDown } from "./shutdown.js";
-import { compressIfNeeded, type MemoryState } from "./memory.js";
+import { compressIfNeeded } from "./memory.js";
+import type { ConversationContext } from "./tenant.js";
+import { createConversationContext } from "./tenant.js";
 
+// ── Default context for REPL (backward compat) ─────────────────────────────
+//
+// The REPL doesn't know about tenants or sessions. It uses this default
+// context so the existing CLI keeps working unchanged.
 
-export const messages: Message[] = [
-  {
-    role: "system",
-    content: `You are a helpful support assistant for PostHog. You MUST use the provided tools to answer questions. NEVER describe what you would do — actually do it by calling the tools. Do NOT write code snippets. Call the tool directly.
+const DEFAULT_SYSTEM_PROMPT = `You are a helpful support assistant for PostHog. You MUST use the provided tools to answer questions. NEVER describe what you would do — actually do it by calling the tools. Do NOT write code snippets. Call the tool directly.
 
 TOOL SELECTION:
 - When the user asks about product features, setup guides, documentation, or troubleshooting → use search_knowledge FIRST.
@@ -23,30 +26,26 @@ If you don't know a file path, call list_directory first to discover it. NEVER g
 Tool results are structured JSON of the form:
   {"ok": true, "data": "..."}
   {"ok": false, "error": {"type": "...", "message": "..."}}
-When ok is false, read the error type and message, correct your inputs, and retry — do not give up on the first failure.`,
-  },
-];
+When ok is false, read the error type and message, correct your inputs, and retry — do not give up on the first failure.`;
 
-// Tracks compressed conversation history across turns
-const memoryState: MemoryState = { summary: null };
+const defaultContext = createConversationContext("repl", {
+  tenantId: "posthog",
+  systemPrompt: DEFAULT_SYSTEM_PROMPT,
+  maxTokensPerDay: 0,
+});
 
-// Context window size for the model — used to decide when to compress.
-// Most local models (Ollama) default to 8192. Cloud models are larger.
-// Can be overridden via env var.
-const MAX_CONTEXT_TOKENS = parseInt(process.env.MAX_CONTEXT_TOKENS || "8192", 10);
+// ── Public API for REPL (backward compat) ───────────────────────────────────
+// These expose the default context's state so the REPL code doesn't change.
 
-// Wipe the conversation but keep the system prompt. Owned here so the
-// "index 0 is the system message" invariant never leaks into the REPL.
+export const messages = defaultContext.messages;
+
 export function clearConversation(): void {
-  messages.length = 1;
-  memoryState.summary = null; // reset summary when conversation is cleared
-  sessionTokens = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+  defaultContext.messages.length = 1;
+  defaultContext.memoryState.summary = null;
+  defaultContext.tokenUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 }
 
-
-
-
-let sessionTokens: TokenUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+// ── Token accounting ────────────────────────────────────────────────────────
 
 function accumulate(target: TokenUsage, add: TokenUsage): void {
   target.promptTokens += add.promptTokens;
@@ -54,13 +53,33 @@ function accumulate(target: TokenUsage, add: TokenUsage): void {
   target.totalTokens += add.totalTokens;
 }
 
+// Context window size for the model — used to decide when to compress.
+const MAX_CONTEXT_TOKENS = parseInt(process.env.MAX_CONTEXT_TOKENS || "8192", 10);
 
+// ── Agent turn result ───────────────────────────────────────────────────────
+// For HTTP mode, callers need the agent's response text + token usage.
+// REPL mode prints directly to stdout so it doesn't need this.
 
-export async function agentTurn(): Promise<void> {
+export interface AgentTurnResult {
+  text: string;
+  turnTokens: TokenUsage;
+}
+
+// ── The agent loop ──────────────────────────────────────────────────────────
+//
+// Now accepts an optional ConversationContext. If not provided, uses the
+// module-level default (REPL mode). This is how multi-tenancy works:
+// each HTTP request creates its own context and passes it in.
+
+export async function agentTurn(
+  ctx: ConversationContext = defaultContext,
+  activeProvider: Provider = defaultProvider,
+): Promise<AgentTurnResult> {
   const MAX_ITERATIONS = 10;
   const MAX_CONTINUATIONS = parseInt(process.env.MAX_CONTINUATIONS || "3", 10);
 
   let continuations = 0;
+  let fullResponseText = "";
 
   const turnTokens: TokenUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 
@@ -68,15 +87,13 @@ export async function agentTurn(): Promise<void> {
 
     if (isShuttingDown()) {
       console.log("\x1b[33m[agent] Interrupted, stopping gracefully.\x1b[0m");
-      return;
+      return { text: fullResponseText, turnTokens };
     }
 
     // Compress conversation history if approaching context window limit.
-    // This must happen BEFORE the LLM call — once we're over the limit, the
-    // call will fail with context_length_exceeded.
-    await compressIfNeeded(messages, memoryState, provider, MAX_CONTEXT_TOKENS);
+    await compressIfNeeded(ctx.messages, ctx.memoryState, activeProvider, MAX_CONTEXT_TOKENS);
 
-    console.log(`\x1b[90m  (calling ${provider.name}...)\x1b[0m`);
+    console.log(`\x1b[90m  (calling ${activeProvider.name}...)\x1b[0m`);
 
     let text = "";
     let responseToolCalls: ToolCall[] = [];
@@ -84,10 +101,10 @@ export async function agentTurn(): Promise<void> {
     let responseUsage: TokenUsage | null = null;
     let responseError: ProviderError | undefined;
 
-    if (provider.chatStream) {
+    if (activeProvider.chatStream) {
       let firstText = true;
 
-      for await (const event of provider.chatStream(messages, tools)) {
+      for await (const event of activeProvider.chatStream(ctx.messages, tools)) {
         switch (event.type) {
           case "text":
             if (firstText) {
@@ -117,7 +134,7 @@ export async function agentTurn(): Promise<void> {
       if (!firstText) process.stdout.write("\n");
 
     } else {
-      const response = await provider.chat(messages, tools);
+      const response = await activeProvider.chat(ctx.messages, tools);
       text = response.text;
       responseToolCalls = response.toolCalls;
       status = response.status;
@@ -131,17 +148,19 @@ export async function agentTurn(): Promise<void> {
 
     if (responseUsage) {
       accumulate(turnTokens, responseUsage);
-      accumulate(sessionTokens, responseUsage);
+      accumulate(ctx.tokenUsage, responseUsage);
       console.log(
         `\x1b[90m  (tokens: ${responseUsage.promptTokens} in / ${responseUsage.completionTokens} out / ${responseUsage.totalTokens} total)\x1b[0m`,
       );
     }
 
+    fullResponseText += text;
+
     const assistantMsg: Message = { role: "assistant", content: text };
     if (responseToolCalls.length > 0) {
       assistantMsg.tool_calls = responseToolCalls;
     }
-    messages.push(assistantMsg);
+    ctx.messages.push(assistantMsg);
 
     switch (status) {
 
@@ -157,14 +176,13 @@ export async function agentTurn(): Promise<void> {
           console.log("\x1b[33m[agent] Rate limited after retries. Wait a moment and try again.\x1b[0m");
         }
 
-        logTurnSummary(turnTokens);
-        return;
+        logTurnSummary(turnTokens, ctx.tokenUsage);
+        return { text: fullResponseText, turnTokens };
       }
 
       case "stop":
-        // Model is done. This is the ONLY clean exit.
-        logTurnSummary(turnTokens);
-        return;
+        logTurnSummary(turnTokens, ctx.tokenUsage);
+        return { text: fullResponseText, turnTokens };
 
       case "tool_calls": {
         continuations = 0;
@@ -185,7 +203,7 @@ export async function agentTurn(): Promise<void> {
           const color = result.ok ? "\x1b[90m" : "\x1b[31m";
           console.log(`${color}  → [${tc.name}] ${preview}\x1b[0m`);
 
-          messages.push({
+          ctx.messages.push({
             role: "tool",
             content: JSON.stringify(result),
             tool_call_id: tc.id,
@@ -200,13 +218,13 @@ export async function agentTurn(): Promise<void> {
 
         if (continuations > MAX_CONTINUATIONS) {
           console.log("\x1b[31m[agent] Response was truncated and max continuations reached. Output may be incomplete.\x1b[0m");
-          logTurnSummary(turnTokens);
-          return;
+          logTurnSummary(turnTokens, ctx.tokenUsage);
+          return { text: fullResponseText, turnTokens };
         }
 
         console.log(`\x1b[33m[agent] Response truncated (hit max_tokens). Auto-continuing... (${continuations}/${MAX_CONTINUATIONS})\x1b[0m`);
 
-        messages.push({
+        ctx.messages.push({
           role: "user",
           content: "Your previous response was cut off. Please continue from where you stopped.",
         });
@@ -217,7 +235,8 @@ export async function agentTurn(): Promise<void> {
   }
 
   console.log("\x1b[31m[agent] Hit max iterations, stopping.\x1b[0m");
-  logTurnSummary(turnTokens);
+  logTurnSummary(turnTokens, ctx.tokenUsage);
+  return { text: fullResponseText, turnTokens };
 }
 
 
@@ -228,12 +247,12 @@ function previewResult(result: ToolResult): string {
   return `${result.error.type}: ${result.error.message}`;
 }
 
-function logTurnSummary(turn: TokenUsage): void {
+function logTurnSummary(turn: TokenUsage, session: TokenUsage): void {
   if (turn.totalTokens === 0) return;
   console.log(
     `\x1b[90m[turn tokens] ${turn.promptTokens} in / ${turn.completionTokens} out / ${turn.totalTokens} total\x1b[0m`,
   );
   console.log(
-    `\x1b[90m[session tokens] ${sessionTokens.promptTokens} in / ${sessionTokens.completionTokens} out / ${sessionTokens.totalTokens} total\x1b[0m`,
+    `\x1b[90m[session tokens] ${session.promptTokens} in / ${session.completionTokens} out / ${session.totalTokens} total\x1b[0m`,
   );
 }

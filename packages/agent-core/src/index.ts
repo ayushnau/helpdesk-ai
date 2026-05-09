@@ -1,8 +1,27 @@
-export { messages, agentTurn, clearConversation } from "./agent.js";
-export { provider, pickProvider } from "./config.js";
+export { messages, agentTurn, clearConversation, type AgentTurnResult } from "./agent.js";
+export { provider, pickProvider, providerFromClientKey } from "./config.js";
 export { tools, executeTool } from "./tools.js";
 export { isShuttingDown, registerShutdownHandlers } from "./shutdown.js";
 export { countTokens, compressIfNeeded, type MemoryState } from "./memory.js";
+export {
+  type TenantConfig,
+  type ConversationContext,
+  createConversationContext,
+  getTenantConfig,
+  setTenantConfig,
+  invalidateTenantCache,
+  logTokenUsage,
+  getDailyTokenUsage,
+  ensureSchema,
+  getRedis,
+  closeConnections,
+} from "./tenant.js";
+export {
+  getOrCreateSession,
+  saveSession,
+  deleteSession,
+  sessionCount,
+} from "./session-store.js";
 
 // Re-export types so consumers don't reach into providers/
 export type {

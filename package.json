@@ -15,7 +15,10 @@
     "agent:mastra": "bun run apps/mastra-agent/src/main.ts",
     "chunks": "bun run packages/ingestion/src/ingest.ts",
     "embed": "bun run packages/ingestion/src/embed.ts",
-    "search": "bun run packages/retrieval/src/search.ts"
+    "search": "bun run packages/retrieval/src/search.ts",
+    "server": "bun run apps/server/src/main.ts",
+    "server:dev": "bun run --watch apps/server/src/main.ts",
+    "web:dev": "cd apps/web && bun run dev"
   },
   "packageManager": "bun@1.2.4",
   "devDependencies": {

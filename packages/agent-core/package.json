@@ -13,12 +13,15 @@
   "dependencies": {
     "@helpdesk-ai/retrieval": "workspace:*",
     "dotenv": "^17.4.2",
+    "ioredis": "^5.10.1",
     "js-tiktoken": "^1.0.21",
+    "pg": "^8.20.0",
     "zod": "^4.3.6",
     "zod-to-json-schema": "^3.25.2"
   },
   "devDependencies": {
-    "typescript": "^6.0.3",
-    "@types/node": "^25.6.0"
+    "@types/node": "^25.6.0",
+    "@types/pg": "^8.20.0",
+    "typescript": "^6.0.3"
   }
 }

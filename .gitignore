@@ -1,4 +1,6 @@
 .env
+.env.fly
 node_modules
 dist
 .turbo
+.next

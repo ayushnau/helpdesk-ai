@@ -1,0 +1,19 @@
+{
+  "name": "@helpdesk-ai/server",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun run --watch src/main.ts",
+    "start": "bun run src/main.ts"
+  },
+  "dependencies": {
+    "@helpdesk-ai/agent-core": "workspace:*",
+    "hono": "^4.7.10",
+    "dotenv": "^17.4.2"
+  },
+  "devDependencies": {
+    "typescript": "^6.0.3",
+    "@types/node": "^25.6.0"
+  }
+}
