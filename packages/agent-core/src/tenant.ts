@@ -41,12 +41,13 @@ export function createConversationContext(
 
 // ── Connections ─────────────────────────────────────────────────────────────
 
-const DB_URL = process.env.DATABASE_URL || "postgresql://localhost:5432/helpdesk_ai";
+// Strip sslmode from URL to avoid pg driver warnings — we handle SSL in code
+const RAW_DB_URL = process.env.DATABASE_URL || "postgresql://localhost:5432/helpdesk_ai";
+const DB_URL = RAW_DB_URL.replace(/[?&]sslmode=[^&]*/g, "").replace(/\?$/, "");
 const REDIS_URL = process.env.REDIS_URL || "redis://localhost:6379";
 
 // Pool instead of Client — reuses connections across requests.
-// Supabase and other cloud Postgres require SSL
-const isCloudDB = DB_URL.includes("supabase") || DB_URL.includes("neon") || DB_URL.includes("render");
+const isCloudDB = !DB_URL.includes("localhost");
 const pool = new pg.Pool({
   connectionString: DB_URL,
   max: 10,
