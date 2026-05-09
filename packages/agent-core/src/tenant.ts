@@ -45,16 +45,24 @@ const DB_URL = process.env.DATABASE_URL || "postgresql://localhost:5432/helpdesk
 const REDIS_URL = process.env.REDIS_URL || "redis://localhost:6379";
 
 // Pool instead of Client — reuses connections across requests.
-const pool = new pg.Pool({ connectionString: DB_URL, max: 10 });
+// Supabase and other cloud Postgres require SSL
+const isCloudDB = DB_URL.includes("supabase") || DB_URL.includes("neon") || DB_URL.includes("render");
+const pool = new pg.Pool({
+  connectionString: DB_URL,
+  max: 10,
+  ...(isCloudDB ? { ssl: { rejectUnauthorized: false } } : {}),
+});
 
 let redis: Redis | null = null;
 
 /** Get Redis client (lazy init so REPL doesn't require Redis running) */
 export function getRedis(): Redis {
   if (!redis) {
+    const isTLS = REDIS_URL.startsWith("rediss://");
     redis = new Redis(REDIS_URL, {
       maxRetriesPerRequest: 3,
       lazyConnect: true,
+      ...(isTLS ? { tls: {} } : {}),
     });
   }
   return redis;

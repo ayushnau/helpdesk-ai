@@ -11,6 +11,55 @@ function getLLMHeaders(): Record<string, string> {
   return headers;
 }
 
+export async function sendMessageStream(
+  message: string,
+  tenantId: string,
+  sessionId: string,
+  onEvent: (event: { type: string; data: Record<string, unknown> }) => void,
+) {
+  const res = await fetch(`${API_BASE}/chat/stream`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Tenant-ID": tenantId,
+      "X-Session-ID": sessionId,
+      ...getLLMHeaders(),
+    },
+    body: JSON.stringify({ message }),
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: "Request failed" }));
+    throw new Error(err.error || `HTTP ${res.status}`);
+  }
+
+  const reader = res.body!.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() || "";
+
+    let currentEvent = "";
+    for (const line of lines) {
+      if (line.startsWith("event: ")) {
+        currentEvent = line.slice(7);
+      } else if (line.startsWith("data: ") && currentEvent) {
+        try {
+          const data = JSON.parse(line.slice(6));
+          onEvent({ type: currentEvent, data });
+        } catch {}
+        currentEvent = "";
+      }
+    }
+  }
+}
+
 export async function sendMessage(message: string, tenantId: string, sessionId: string) {
   const res = await fetch(`${API_BASE}/chat`, {
     method: "POST",

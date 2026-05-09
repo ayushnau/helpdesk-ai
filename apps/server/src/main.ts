@@ -5,6 +5,7 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import {
   agentTurn,
+  agentTurnStream,
   getOrCreateSession,
   saveSession,
   deleteSession,
@@ -115,6 +116,87 @@ app.post("/chat", async (c) => {
     },
     sessionId,
     tenantId,
+  });
+});
+
+// ── POST /chat/stream — SSE streaming response ────────────────────────────
+
+app.post("/chat/stream", async (c) => {
+  const tenantId = c.get("tenantId");
+  const sessionId = c.get("sessionId");
+
+  const body = await c.req.json<{ message?: string }>();
+  if (!body.message?.trim()) {
+    return c.json({ error: "Missing 'message' in request body" }, 400);
+  }
+
+  const ctx = await getOrCreateSession(sessionId, tenantId);
+  if (!ctx) {
+    return c.json({ error: `Unknown tenant: ${tenantId}` }, 404);
+  }
+
+  const config = (await getTenantConfig(tenantId))!;
+  if (config.maxTokensPerDay > 0) {
+    const dailyUsage = await getDailyTokenUsage(tenantId);
+    if (dailyUsage >= config.maxTokensPerDay) {
+      return c.json({ error: "Daily token limit exceeded" }, 429);
+    }
+  }
+
+  ctx.messages.push({ role: "user", content: body.message.trim() });
+  await saveSession(ctx);
+
+  const clientProvider = providerFromClientKey({
+    geminiKey: c.req.header("X-Gemini-Key"),
+    groqKey: c.req.header("X-Groq-Key"),
+  });
+  const activeProvider = clientProvider || provider;
+
+  const stream = new ReadableStream({
+    async start(controller) {
+      const encoder = new TextEncoder();
+      const send = (event: string, data: unknown) => {
+        controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
+      };
+
+      try {
+        for await (const event of agentTurnStream(ctx, activeProvider)) {
+          switch (event.type) {
+            case "text":
+              send("text", { token: event.token });
+              break;
+            case "tool_start":
+              send("tool_start", { name: event.name, args: event.args });
+              break;
+            case "tool_end":
+              send("tool_end", { name: event.name, result: event.result, ok: event.ok });
+              break;
+            case "error":
+              send("error", { message: event.message });
+              break;
+            case "done":
+              await saveSession(ctx);
+              await logTokenUsage(tenantId, sessionId, event.turnTokens);
+              send("done", { text: event.text, turnTokens: event.turnTokens });
+              break;
+          }
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : "Stream error";
+        send("error", { message: msg });
+      } finally {
+        controller.close();
+      }
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      "Connection": "keep-alive",
+      "Access-Control-Allow-Origin": "*",
+    },
   });
 });
 

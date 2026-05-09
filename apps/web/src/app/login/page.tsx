@@ -109,6 +109,37 @@ export default function LoginPage() {
           </button>
         </div>
 
+        <div className="card" style={{ padding: 20, marginTop: 12, textAlign: "center" }}>
+          <div style={{ fontSize: 13, fontWeight: 500, color: "var(--fg-2)", marginBottom: 8 }}>
+            Want to try the full dashboard?
+          </div>
+          <div style={{ fontSize: 12.5, color: "var(--fg-3)", lineHeight: 1.6 }}>
+            This is a live multi-tenant AI agent platform. To get demo access or
+            discuss how it works, reach out directly.
+          </div>
+          <div style={{ marginTop: 16, display: "flex", flexDirection: "column", gap: 8 }}>
+            <a href="mailto:ayushnautiyaldevelopr@gmail.com" style={{
+              display: "flex", alignItems: "center", gap: 10,
+              padding: "10px 14px", background: "var(--card-2)",
+              border: "1px solid var(--border)", borderRadius: "var(--radius-sm)",
+              color: "var(--fg)", textDecoration: "none", fontFamily: "inherit", fontSize: 13,
+            }}>
+              <Icon name="ext" size={14} />
+              <span>ayushnautiyaldevelopr@gmail.com</span>
+            </a>
+            <a href="tel:+918532949512" style={{
+              display: "flex", alignItems: "center", gap: 10,
+              padding: "10px 14px", background: "var(--card-2)",
+              border: "1px solid var(--border)", borderRadius: "var(--radius-sm)",
+              color: "var(--fg)", textDecoration: "none", fontFamily: "inherit", fontSize: 13,
+            }}>
+              <Icon name="chat" size={14} />
+              <span>+91 8532949512</span>
+            </a>
+          </div>
+        </div>
+
+        {/* Demo auto-login — uncomment when running your own server
         <div className="card" style={{ padding: 16, marginTop: 12 }}>
           <div style={{ fontSize: 11, color: "var(--fg-4)", marginBottom: 8 }} className="mono">DEMO CREDENTIALS</div>
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
@@ -141,6 +172,7 @@ export default function LoginPage() {
             ))}
           </div>
         </div>
+        */}
       </div>
     </div>
   );

@@ -1,7 +1,7 @@
 FROM node:20-alpine AS base
 
 # Install bun for workspace resolution during build
-RUN corepack enable && npm install -g bun
+RUN npm install -g bun
 
 WORKDIR /app
 
@@ -13,7 +13,7 @@ COPY packages/ packages/
 COPY apps/web/ apps/web/
 
 # Install dependencies
-RUN bun install --frozen-lockfile
+RUN bun install
 
 # Build Next.js
 WORKDIR /app/apps/web
@@ -30,7 +30,6 @@ ENV HOSTNAME="0.0.0.0"
 # Copy standalone output
 COPY --from=base /app/apps/web/.next/standalone ./
 COPY --from=base /app/apps/web/.next/static ./apps/web/.next/static
-COPY --from=base /app/apps/web/public ./apps/web/public 2>/dev/null || true
 
 EXPOSE 8080
 

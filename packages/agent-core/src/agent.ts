@@ -1,6 +1,6 @@
 import type { Message, TokenUsage, ToolCall, ProviderResponse, ProviderError, Provider } from "./providers/index.js";
 import { provider as defaultProvider } from "./config.js";
-import { tools, executeTool, type ToolResult } from "./tools.js";
+import { tools, executeTool, setActiveTenantId, type ToolResult } from "./tools.js";
 import { isShuttingDown } from "./shutdown.js";
 import { compressIfNeeded } from "./memory.js";
 import type { ConversationContext } from "./tenant.js";
@@ -71,29 +71,79 @@ export interface AgentTurnResult {
 // module-level default (REPL mode). This is how multi-tenancy works:
 // each HTTP request creates its own context and passes it in.
 
+// agentTurn is now a thin wrapper over agentTurnStream — single source of truth.
+// Collects all streamed events into a final result, with REPL-style console output.
 export async function agentTurn(
   ctx: ConversationContext = defaultContext,
   activeProvider: Provider = defaultProvider,
 ): Promise<AgentTurnResult> {
+  let result: AgentTurnResult = { text: "", turnTokens: { promptTokens: 0, completionTokens: 0, totalTokens: 0 } };
+  let firstText = true;
+
+  for await (const event of agentTurnStream(ctx, activeProvider)) {
+    switch (event.type) {
+      case "text":
+        if (firstText) {
+          process.stdout.write(`\n\x1b[36massistant:\x1b[0m `);
+          firstText = false;
+        }
+        process.stdout.write(event.token);
+        break;
+      case "tool_start":
+        console.log(`\n\x1b[33m  [tool] ${event.name}(\x1b[0m${JSON.stringify(event.args)}\x1b[33m)\x1b[0m`);
+        break;
+      case "tool_end": {
+        const color = event.ok ? "\x1b[90m" : "\x1b[31m";
+        console.log(`${color}  → [${event.name}] ${event.result}\x1b[0m`);
+        break;
+      }
+      case "error":
+        console.log(`\n\x1b[31m[agent] ${event.message}\x1b[0m`);
+        break;
+      case "done":
+        if (!firstText) process.stdout.write("\n");
+        result = { text: event.text, turnTokens: event.turnTokens };
+        logTurnSummary(event.turnTokens, ctx.tokenUsage);
+        break;
+    }
+  }
+
+  return result;
+}
+
+
+// ── Streaming agent turn ────────────────────────────────────────────────────
+// Yields events as they happen instead of returning a final result.
+// Used by the SSE endpoint to stream responses to the browser.
+
+export type AgentStreamEvent =
+  | { type: "text"; token: string }
+  | { type: "tool_start"; name: string; args: Record<string, unknown> }
+  | { type: "tool_end"; name: string; result: string; ok: boolean }
+  | { type: "done"; text: string; turnTokens: TokenUsage }
+  | { type: "error"; message: string };
+
+export async function* agentTurnStream(
+  ctx: ConversationContext = defaultContext,
+  activeProvider: Provider = defaultProvider,
+): AsyncGenerator<AgentStreamEvent> {
+  // Set the active tenant so search_knowledge scopes to the right tenant's docs
+  setActiveTenantId(ctx.tenantConfig.tenantId);
+
   const MAX_ITERATIONS = 10;
   const MAX_CONTINUATIONS = parseInt(process.env.MAX_CONTINUATIONS || "3", 10);
 
   let continuations = 0;
   let fullResponseText = "";
-
   const turnTokens: TokenUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 
   for (let i = 0; i < MAX_ITERATIONS; i++) {
-
     if (isShuttingDown()) {
-      console.log("\x1b[33m[agent] Interrupted, stopping gracefully.\x1b[0m");
-      return { text: fullResponseText, turnTokens };
+      yield { type: "done", text: fullResponseText, turnTokens };
+      return;
     }
 
-    // Compress conversation history if approaching context window limit.
     await compressIfNeeded(ctx.messages, ctx.memoryState, activeProvider, MAX_CONTEXT_TOKENS);
-
-    console.log(`\x1b[90m  (calling ${activeProvider.name}...)\x1b[0m`);
 
     let text = "";
     let responseToolCalls: ToolCall[] = [];
@@ -102,37 +152,25 @@ export async function agentTurn(
     let responseError: ProviderError | undefined;
 
     if (activeProvider.chatStream) {
-      let firstText = true;
-
       for await (const event of activeProvider.chatStream(ctx.messages, tools)) {
         switch (event.type) {
           case "text":
-            if (firstText) {
-              process.stdout.write(`\n\x1b[36massistant:\x1b[0m `);
-              firstText = false;
-            }
-            process.stdout.write(event.token);
             text += event.token;
+            yield { type: "text", token: event.token };
             break;
-
           case "tool_call":
             responseToolCalls.push(event.toolCall);
             break;
-
           case "done":
             responseUsage = event.usage;
             status = event.finishReason;
             break;
-
           case "error":
             responseError = event.error;
             status = "error";
             break;
         }
       }
-
-      if (!firstText) process.stdout.write("\n");
-
     } else {
       const response = await activeProvider.chat(ctx.messages, tools);
       text = response.text;
@@ -140,18 +178,12 @@ export async function agentTurn(
       status = response.status;
       responseUsage = response.usage;
       responseError = response.error;
-
-      if (text) {
-        console.log(`\n\x1b[36massistant:\x1b[0m ${text}`);
-      }
+      if (text) yield { type: "text", token: text };
     }
 
     if (responseUsage) {
       accumulate(turnTokens, responseUsage);
       accumulate(ctx.tokenUsage, responseUsage);
-      console.log(
-        `\x1b[90m  (tokens: ${responseUsage.promptTokens} in / ${responseUsage.completionTokens} out / ${responseUsage.totalTokens} total)\x1b[0m`,
-      );
     }
 
     fullResponseText += text;
@@ -162,83 +194,58 @@ export async function agentTurn(
     }
     ctx.messages.push(assistantMsg);
 
-    switch (status) {
+    if (status === "error") {
+      yield { type: "error", message: responseError?.message || "LLM error" };
+      yield { type: "done", text: fullResponseText, turnTokens };
+      return;
+    }
 
-      case "error": {
-        const err = responseError!;
-        console.log(`\n\x1b[31m[agent] LLM API error (${err.type}): ${err.message}\x1b[0m`);
+    if (status === "stop") {
+      yield { type: "done", text: fullResponseText, turnTokens };
+      return;
+    }
 
-        if (err.type === "auth") {
-          console.log("\x1b[31m[agent] Check your API key and try again.\x1b[0m");
-        } else if (err.type === "context_length_exceeded") {
-          console.log("\x1b[31m[agent] Conversation too long. Use /clear to reset.\x1b[0m");
-        } else if (err.type === "rate_limited") {
-          console.log("\x1b[33m[agent] Rate limited after retries. Wait a moment and try again.\x1b[0m");
-        }
-
-        logTurnSummary(turnTokens, ctx.tokenUsage);
-        return { text: fullResponseText, turnTokens };
+    if (status === "tool_calls") {
+      continuations = 0;
+      for (const tc of responseToolCalls) {
+        yield { type: "tool_start", name: tc.name, args: tc.arguments };
       }
 
-      case "stop":
-        logTurnSummary(turnTokens, ctx.tokenUsage);
-        return { text: fullResponseText, turnTokens };
+      const results = await Promise.all(
+        responseToolCalls.map((tc) => executeTool(tc.name, tc.arguments))
+      );
 
-      case "tool_calls": {
-        continuations = 0;
-
-        for (const tc of responseToolCalls) {
-          console.log(`\n\x1b[33m  [tool] ${tc.name}(\x1b[0m${JSON.stringify(tc.arguments)}\x1b[33m)\x1b[0m`);
-        }
-
-        const results = await Promise.all(
-          responseToolCalls.map((tc) => executeTool(tc.name, tc.arguments))
-        );
-
-        for (let j = 0; j < responseToolCalls.length; j++) {
-          const result = results[j];
-          const tc = responseToolCalls[j];
-
-          const preview = previewResult(result);
-          const color = result.ok ? "\x1b[90m" : "\x1b[31m";
-          console.log(`${color}  → [${tc.name}] ${preview}\x1b[0m`);
-
-          ctx.messages.push({
-            role: "tool",
-            content: JSON.stringify(result),
-            tool_call_id: tc.id,
-          });
-        }
-
-        break;
-      }
-
-      case "length": {
-        continuations++;
-
-        if (continuations > MAX_CONTINUATIONS) {
-          console.log("\x1b[31m[agent] Response was truncated and max continuations reached. Output may be incomplete.\x1b[0m");
-          logTurnSummary(turnTokens, ctx.tokenUsage);
-          return { text: fullResponseText, turnTokens };
-        }
-
-        console.log(`\x1b[33m[agent] Response truncated (hit max_tokens). Auto-continuing... (${continuations}/${MAX_CONTINUATIONS})\x1b[0m`);
+      for (let j = 0; j < responseToolCalls.length; j++) {
+        const result = results[j];
+        const tc = responseToolCalls[j];
+        const preview = result.ok ? result.data.slice(0, 200) : result.error.message;
+        yield { type: "tool_end", name: tc.name, result: preview, ok: result.ok };
 
         ctx.messages.push({
-          role: "user",
-          content: "Your previous response was cut off. Please continue from where you stopped.",
+          role: "tool",
+          content: JSON.stringify(result),
+          tool_call_id: tc.id,
         });
-
-        break;
       }
+      continue;
+    }
+
+    if (status === "length") {
+      continuations++;
+      if (continuations > MAX_CONTINUATIONS) {
+        yield { type: "done", text: fullResponseText, turnTokens };
+        return;
+      }
+      ctx.messages.push({
+        role: "user",
+        content: "Your previous response was cut off. Please continue from where you stopped.",
+      });
+      continue;
     }
   }
 
-  console.log("\x1b[31m[agent] Hit max iterations, stopping.\x1b[0m");
-  logTurnSummary(turnTokens, ctx.tokenUsage);
-  return { text: fullResponseText, turnTokens };
+  yield { type: "done", text: fullResponseText, turnTokens };
 }
-
 
 function previewResult(result: ToolResult): string {
   if (result.ok) {

@@ -156,17 +156,22 @@ const searchText: Tool<{ query: string; path?: string }> = {
   },
 };
 
-const searchKnowledge: Tool<{ query: string; tenant_id?: string }> = {
+// Active tenant ID — set per-request before tool execution so search_knowledge
+// scopes to the correct tenant without relying on the LLM to pass it.
+let _activeTenantId = "posthog";
+export function setActiveTenantId(id: string) { _activeTenantId = id; }
+
+const searchKnowledge: Tool<{ query: string }> = {
   name: "search_knowledge",
   description:
     "Search the knowledge base for relevant documentation. Use this when the user asks a question " +
     "about the product, features, setup guides, or troubleshooting. Returns the most relevant doc chunks.",
   inputSchema: z.object({
     query: z.string().min(1).describe("The search query — rephrase the user's question into keywords for best results"),
-    tenant_id: z.string().optional().describe("Tenant ID to scope the search (defaults to 'posthog')"),
   }),
-  async execute({ query, tenant_id }) {
-    const tenantId = tenant_id || "posthog";
+  async execute({ query }) {
+    const tenantId = _activeTenantId;
+    console.log(`[search_knowledge] tenant=${tenantId} query="${query}"`);
     const chunks = await retrieveChunks(query, tenantId);
 
     if (chunks.length === 0) {

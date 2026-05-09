@@ -4,7 +4,7 @@ import React, { useState, useCallback, useRef, useEffect } from "react";
 import { Icon } from "./icons";
 import { Btn, Kbd, ToolCall, CitationChip } from "./ui";
 import { renderRich } from "./rich-text";
-import { sendMessage, clearSession } from "@/lib/api";
+import { sendMessageStream, clearSession } from "@/lib/api";
 import { createSessionId, getTenantId } from "@/lib/session";
 import type { Turn } from "@/lib/data";
 
@@ -43,39 +43,96 @@ export function useChat({ initial = [], mock = false, tenantOverride }: { initia
     if (!text.trim() || pendingRef.current) return;
     const currentSessionId = sessionIdRef.current;
     const currentTenantId = tenantIdRef.current;
-
-    if (!currentSessionId) return; // not initialized yet
+    if (!currentSessionId) return;
 
     const userTurn: Turn = { role: "user", text, ts: new Date() };
     setTurns((t) => [...t, userTurn]);
     setInput("");
     setPending({ phase: "tool" });
 
+    // Track streaming state via refs so the SSE callback always sees latest
+    let assistantText = "";
+    let assistantAdded = false;
+    let totalTokens = 0;
+
     try {
-      const data = await sendMessage(text, currentTenantId, currentSessionId);
-      const turnTokens = data.tokenUsage?.turn?.totalTokens || 0;
-      setTurns((t) => [
-        ...t,
-        {
-          role: "tool",
-          name: "search_knowledge_base",
-          query: text.slice(0, 80).toLowerCase().replace(/[?.!]/g, ""),
-          result: `retrieved · ${turnTokens} tokens`,
-          ts: new Date(),
-        },
-        {
-          role: "assistant",
-          text: data.response,
-          tokens: turnTokens,
-          ts: new Date(),
-        },
-      ]);
+      await sendMessageStream(text, currentTenantId, currentSessionId, (event) => {
+        const d = event.data;
+
+        switch (event.type) {
+          case "tool_start":
+            setTurns((t) => [
+              ...t,
+              {
+                role: "tool",
+                name: String(d.name || "tool"),
+                query: JSON.stringify(d.args || {}).slice(0, 80),
+                ts: new Date(),
+              },
+            ]);
+            break;
+
+          case "tool_end":
+            // Update the last tool turn with the result
+            setTurns((t) => {
+              const updated = [...t];
+              for (let i = updated.length - 1; i >= 0; i--) {
+                if (updated[i].role === "tool" && !updated[i].result) {
+                  updated[i] = { ...updated[i], result: `${d.ok ? "done" : "error"} · ${String(d.result || "").slice(0, 60)}` };
+                  break;
+                }
+              }
+              return updated;
+            });
+            setPending({ phase: "thinking" });
+            break;
+
+          case "text":
+            if (!assistantAdded) {
+              // Add the assistant turn placeholder
+              assistantAdded = true;
+              setPending(null);
+              setTurns((t) => [...t, { role: "assistant", text: String(d.token || ""), ts: new Date() }]);
+            } else {
+              // Append token to the last assistant turn
+              setTurns((t) => {
+                const updated = [...t];
+                const last = updated[updated.length - 1];
+                if (last.role === "assistant") {
+                  updated[updated.length - 1] = { ...last, text: (last.text || "") + String(d.token || "") };
+                }
+                return updated;
+              });
+            }
+            assistantText += String(d.token || "");
+            break;
+
+          case "done":
+            totalTokens = (d.turnTokens as { totalTokens?: number })?.totalTokens || 0;
+            // Update the assistant turn with final token count
+            setTurns((t) => {
+              const updated = [...t];
+              const last = updated[updated.length - 1];
+              if (last.role === "assistant") {
+                updated[updated.length - 1] = { ...last, tokens: totalTokens };
+              }
+              return updated;
+            });
+            break;
+
+          case "error":
+            setTurns((t) => [
+              ...t,
+              { role: "assistant", text: `Error: ${d.message || "Unknown error"}`, ts: new Date() },
+            ]);
+            break;
+        }
+      });
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Something went wrong";
-      setTurns((t) => [
-        ...t,
-        { role: "assistant", text: `Error: ${message}`, ts: new Date() },
-      ]);
+      if (!assistantAdded) {
+        setTurns((t) => [...t, { role: "assistant", text: `Error: ${message}`, ts: new Date() }]);
+      }
     } finally {
       setPending(null);
     }

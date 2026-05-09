@@ -49,19 +49,18 @@ function LandingDemoFrame() {
   );
 }
 
-// TODO: Replace this URL with your actual demo video (Loom/YouTube)
-const DEMO_VIDEO_URL = "";
+const DEMO_VIDEO_URL = "https://www.loom.com/embed/fd1f8fffe3954805923cc802c757ac33?t=6&hide_share=true&hideEmbedTopBar=true";
 
 function LandingDemoTabs() {
-  const [tab, setTab] = React.useState<"live" | "video">("live");
+  const [tab, setTab] = React.useState<"live" | "video">("video");
   return (
     <div>
       <div style={{ display: "flex", justifyContent: "center", marginBottom: 20, gap: 4 }}>
         <div className="seg-tabs">
-          <button className={`seg-tab ${tab === "live" ? "seg-active" : ""}`} onClick={() => setTab("live")}>
+          {/* <button className={`seg-tab ${tab === "live" ? "seg-active" : ""}`} onClick={() => setTab("live")}>
             <Icon name="play" size={12} /> Live demo
-          </button>
-          <button className={`seg-tab ${tab === "video" ? "seg-active" : ""}`} onClick={() => setTab("video")}>
+          </button> */}
+          <button className="seg-tab seg-active">
             <Icon name="chart" size={12} /> Watch video
           </button>
         </div>
@@ -69,25 +68,23 @@ function LandingDemoTabs() {
       {tab === "live" ? (
         <LandingDemoFrame />
       ) : (
-        <div className="lp-demo-frame" style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: 540 }}>
-          {DEMO_VIDEO_URL ? (
-            <iframe
-              src={DEMO_VIDEO_URL}
-              style={{ width: "100%", height: 540, border: 0, borderRadius: 14 }}
-              allow="autoplay; fullscreen; picture-in-picture"
-              allowFullScreen
-            />
-          ) : (
-            <div style={{ textAlign: "center", padding: 60 }}>
-              <div style={{ fontSize: 48, marginBottom: 16, opacity: 0.2 }}>
-                <Icon name="play" size={48} />
-              </div>
-              <div style={{ fontSize: 15, fontWeight: 500, color: "var(--fg-2)" }}>Demo video coming soon</div>
-              <div style={{ fontSize: 13, color: "var(--fg-4)", marginTop: 6 }}>
-                Try the live demo in the meantime — it connects to a real agent.
-              </div>
+        <div className="lp-demo-frame" style={{ position: "relative", minHeight: 540 }}>
+          <div style={{
+            position: "absolute", inset: 0, display: "flex", flexDirection: "column",
+            alignItems: "center", justifyContent: "center", gap: 12,
+            background: "var(--surface)", borderRadius: 14, zIndex: 0,
+          }}>
+            <div style={{ display: "flex", gap: 6 }}>
+              <span className="thinking-dots"><i /><i /><i /></span>
             </div>
-          )}
+            <span className="mono" style={{ fontSize: 12, color: "var(--fg-4)" }}>Loading demo video...</span>
+          </div>
+          <iframe
+            src={DEMO_VIDEO_URL}
+            style={{ position: "relative", zIndex: 1, width: "100%", height: 540, border: 0, borderRadius: 14 }}
+            allow="autoplay; fullscreen; picture-in-picture"
+            allowFullScreen
+          />
         </div>
       )}
     </div>
@@ -101,11 +98,13 @@ export default function LandingPage() {
         <div className="lp-nav-left">
           <Logo />
           <nav className="lp-nav-links">
-            <a>Product</a><a>Docs</a><a>Pricing</a><a>Changelog</a>
+            <a href="#features">Features</a>
+            <a href="https://github.com/ayushnau/helpdesk-ai" target="_blank" rel="noopener noreferrer">Docs</a>
+            <a href="https://github.com/ayushnau/helpdesk-ai/commits" target="_blank" rel="noopener noreferrer">Changelog</a>
           </nav>
         </div>
         <div className="lp-nav-right">
-          <a className="lp-link mono">v0.4.2 →</a>
+          <a className="lp-link mono" href="https://github.com/ayushnau/helpdesk-ai" target="_blank" rel="noopener noreferrer">GitHub →</a>
           <Link href="/chat"><Btn kind="ghost" size="sm">Try the demo</Btn></Link>
           <Link href="/dashboard"><Btn kind="primary" size="sm" iconRight="arrow">Dashboard</Btn></Link>
         </div>
@@ -142,17 +141,17 @@ export default function LandingPage() {
         <div className="lp-hero-glow" aria-hidden="true" />
       </section>
 
-      <section className="lp-demo">
+      <section className="lp-demo" id="demo">
         <LandingDemoTabs />
       </section>
 
-      <section className="lp-features">
+      <section className="lp-features" id="features">
         <div className="lp-features-grid">
           {[
             { icon: "book", title: "Grounded in your docs", body: "Indexes Markdown, MDX, OpenAPI, and Notion. Re-embeds on every commit. The agent only answers from sources it can cite." },
             { icon: "cmd", title: "Tool-using by default", body: "Searches the knowledge base, looks up status pages, and reads release notes. You see every tool call in the transcript." },
             { icon: "chart", title: "Per-tenant cost tracking", body: "Token usage, model breakdown, and daily limits scoped to each tenant. Hard caps prevent runaway spend." },
-            { icon: "server", title: "Self-host or hosted", body: "Single-tenant Docker or our managed cloud. Bring your own model — Claude, GPT, or open-source via vLLM." },
+            { icon: "server", title: "Self-host or hosted", body: "Single-tenant Docker or our managed cloud. Bring your own model — GPT, or open-source via vLLM." },
             { icon: "key", title: "Embed in 30 seconds", body: "One <script> tag. Custom theming, custom prompt per project, session-scoped memory in Redis." },
             { icon: "flask", title: "A/B test your prompt", body: "Ship a new system prompt to 10% of conversations. Compare deflection rate and CSAT before rolling out." },
           ].map((f, i) => (
@@ -165,7 +164,7 @@ export default function LandingPage() {
         </div>
       </section>
 
-      <section className="lp-strip">
+      <section className="lp-strip" id="stats">
         <div className="lp-strip-inner">
           <div>
             <div className="eyebrow">Production stats</div>

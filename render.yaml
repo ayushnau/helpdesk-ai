@@ -1,0 +1,38 @@
+services:
+  # Backend API server
+  - type: web
+    name: helpdesk-ai-api
+    runtime: docker
+    dockerfilePath: ./apps/server/Dockerfile
+    dockerContext: .
+    region: oregon
+    plan: free
+    envVars:
+      - key: PORT
+        value: "8080"
+      - key: DATABASE_URL
+        sync: false  # Set manually in Render dashboard
+      - key: REDIS_URL
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: LLM_PROVIDER
+        value: gemini
+      - key: CORS_ORIGINS
+        sync: false  # Set to the frontend URL after deployment
+
+  # Frontend Next.js app
+  - type: web
+    name: helpdesk-ai-web
+    runtime: docker
+    dockerfilePath: ./apps/web/Dockerfile
+    dockerContext: .
+    region: oregon
+    plan: free
+    envVars:
+      - key: PORT
+        value: "8080"
+      - key: NODE_ENV
+        value: production
+      - key: NEXT_PUBLIC_API_URL
+        sync: false  # Set to the backend URL after deployment

@@ -1,6 +1,6 @@
-export { messages, agentTurn, clearConversation, type AgentTurnResult } from "./agent.js";
+export { messages, agentTurn, agentTurnStream, clearConversation, type AgentTurnResult, type AgentStreamEvent } from "./agent.js";
 export { provider, pickProvider, providerFromClientKey } from "./config.js";
-export { tools, executeTool } from "./tools.js";
+export { tools, executeTool, setActiveTenantId } from "./tools.js";
 export { isShuttingDown, registerShutdownHandlers } from "./shutdown.js";
 export { countTokens, compressIfNeeded, type MemoryState } from "./memory.js";
 export {

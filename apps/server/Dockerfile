@@ -9,12 +9,15 @@ COPY package.json bun.lock turbo.json tsconfig.json ./
 COPY packages/ packages/
 COPY apps/server/ apps/server/
 
-# Install dependencies
-RUN bun install --frozen-lockfile
+# Install dependencies (--no-frozen-lockfile for CI flexibility)
+RUN bun install
 
 # Expose port
 ENV PORT=8080
 EXPOSE 8080
+
+# Default to gemini provider in production
+ENV LLM_PROVIDER=gemini
 
 # Run the server
 CMD ["bun", "run", "apps/server/src/main.ts"]
