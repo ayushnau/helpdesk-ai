@@ -4,13 +4,6 @@ dotenv.config();
 import type { Provider } from "./providers/index.js";
 import { createOpenAICompatProvider } from "./providers/index.js";
 
-
-function requireEnv(name: string): string {
-  const val = process.env[name];
-  if (!val) throw new Error(`Set ${name} env var first`);
-  return val;
-}
-
 export function pickProvider(): Provider {
   // Support both CLI args (local dev) and env vars (deployment)
   const [, , cliLlm, cliModel] = process.argv;
@@ -18,21 +11,45 @@ export function pickProvider(): Provider {
   const model = cliModel || process.env.LLM_MODEL || undefined;
 
   switch (llm) {
-    case "gemini":
+    case "gemini": {
+      const apiKey = process.env.GEMINI_API_KEY;
+      if (!apiKey) {
+        // No server-side key — create a placeholder provider that errors on use.
+        // Users must provide their own key via the Settings UI (X-Gemini-Key header).
+        console.warn("[config] No GEMINI_API_KEY set. Server will rely on client-provided keys.");
+        return createOpenAICompatProvider({
+          name: "gemini/gemini-2.5-flash-lite (no server key)",
+          baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
+          model: model || "gemini-2.5-flash-lite",
+          apiKey: "placeholder-requires-client-key",
+        });
+      }
       return createOpenAICompatProvider({
         name: `gemini/${model || "gemini-2.5-flash-lite"}`,
         baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
         model: model || "gemini-2.5-flash-lite",
-        apiKey: requireEnv("GEMINI_API_KEY"),
+        apiKey,
       });
+    }
 
-    case "groq":
+    case "groq": {
+      const apiKey = process.env.GROQ_API_KEY;
+      if (!apiKey) {
+        console.warn("[config] No GROQ_API_KEY set. Server will rely on client-provided keys.");
+        return createOpenAICompatProvider({
+          name: "groq/llama-3.3-70b-versatile (no server key)",
+          baseUrl: "https://api.groq.com/openai/v1",
+          model: model || "llama-3.3-70b-versatile",
+          apiKey: "placeholder-requires-client-key",
+        });
+      }
       return createOpenAICompatProvider({
         name: `groq/${model || "llama-3.3-70b-versatile"}`,
         baseUrl: "https://api.groq.com/openai/v1",
         model: model || "llama-3.3-70b-versatile",
-        apiKey: requireEnv("GROQ_API_KEY"),
+        apiKey,
       });
+    }
 
     case "ollama":
     default:
