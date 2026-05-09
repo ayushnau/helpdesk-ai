@@ -1,6 +1,12 @@
 import dotenv from "dotenv";
 dotenv.config();
 
+// Debug: log which env vars are set (values redacted)
+console.log("[env] DATABASE_URL:", process.env.DATABASE_URL ? "set" : "NOT SET");
+console.log("[env] REDIS_URL:", process.env.REDIS_URL ? "set" : "NOT SET");
+console.log("[env] LLM_PROVIDER:", process.env.LLM_PROVIDER || "NOT SET");
+console.log("[env] GEMINI_API_KEY:", process.env.GEMINI_API_KEY ? "set" : "NOT SET");
+
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import {
