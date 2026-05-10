@@ -272,9 +272,45 @@ export function ChatSurface({ state, header, footer, showTokens = false, emptyTi
   }, [state.turns.length, state.pending]);
 
   const empty = state.turns.length === 0;
+
+  // Check if an LLM API key is configured
+  const [hasKey, setHasKey] = useState(true);
+  const [keyDismissed, setKeyDismissed] = useState(false);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const gemini = localStorage.getItem("helpdesk-gemini-key");
+    const groq = localStorage.getItem("helpdesk-groq-key");
+    setHasKey(!!(gemini || groq));
+  }, []);
+
   return (
     <div className={`chat-surface chat-${density}`}>
       {header}
+      {/* API key info banner — non-blocking */}
+      {!hasKey && !keyDismissed && (
+        <div style={{
+          display: "flex", alignItems: "center", gap: 10,
+          padding: "10px 14px", margin: "8px 12px 0",
+          background: "var(--warning-faint)", borderRadius: "var(--radius-sm)",
+          fontSize: 12, color: "var(--warning)",
+        }}>
+          <Icon name="bolt" size={14} />
+          <div style={{ flex: 1 }}>
+            <strong>API key needed for chat.</strong>{" "}
+            Add your Gemini key in{" "}
+            <a href="/dashboard/settings?tab=model" style={{ color: "var(--accent-hi)", textDecoration: "underline" }}>Settings → Model & API keys</a>{" "}
+            or get one free at{" "}
+            <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer"
+               style={{ color: "var(--accent-hi)", textDecoration: "underline" }}>aistudio.google.com</a>.
+          </div>
+          <button onClick={() => setKeyDismissed(true)} style={{
+            background: "none", border: "none", color: "var(--warning)",
+            cursor: "pointer", padding: 2, flexShrink: 0,
+          }}>
+            <Icon name="x" size={12} />
+          </button>
+        </div>
+      )}
       <div className="chat-stream" ref={ref}>
         {empty ? (
           <div className="chat-empty">

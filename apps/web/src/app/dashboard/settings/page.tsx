@@ -318,7 +318,13 @@ function SettingsDanger() {
 export default function SettingsPage() {
   const { auth } = useAuth();
   const tenantId = auth?.tenantId || "tn_demo";
-  const [section, setSection] = useState("general");
+
+  // Read ?tab= from URL to allow deep linking (e.g. from chat banner)
+  const [section, setSection] = useState(() => {
+    if (typeof window === "undefined") return "general";
+    const params = new URLSearchParams(window.location.search);
+    return params.get("tab") || "general";
+  });
 
   return (
     <div className="page">
