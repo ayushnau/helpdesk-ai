@@ -11,7 +11,7 @@ services:
       - key: PORT
         value: "8080"
       - key: DATABASE_URL
-        sync: false  # Set manually in Render dashboard
+        sync: false
       - key: REDIS_URL
         sync: false
       - key: GEMINI_API_KEY
@@ -19,7 +19,7 @@ services:
       - key: LLM_PROVIDER
         value: gemini
       - key: CORS_ORIGINS
-        sync: false  # Set to the frontend URL after deployment
+        sync: false
 
   # Frontend Next.js app
   - type: web
@@ -29,10 +29,11 @@ services:
     dockerContext: .
     region: oregon
     plan: free
+    buildArgs:
+      - key: NEXT_PUBLIC_API_URL
+        value: https://helpdesk-ai-api.onrender.com
     envVars:
       - key: PORT
         value: "8080"
       - key: NODE_ENV
         value: production
-      - key: NEXT_PUBLIC_API_URL
-        sync: false  # Set to the backend URL after deployment

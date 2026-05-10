@@ -15,6 +15,10 @@ COPY apps/web/ apps/web/
 # Install dependencies
 RUN bun install
 
+# NEXT_PUBLIC_ vars must be available at build time
+ARG NEXT_PUBLIC_API_URL
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+
 # Build Next.js
 WORKDIR /app/apps/web
 RUN npx next build
