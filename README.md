@@ -35,31 +35,67 @@ Hybrid retrieval combining vector similarity + full-text search via Reciprocal R
 
 ---
 
-## Request Flow
+## How a chat message flows through the system
+
+**1. User sends a message** (from dashboard chat or embed widget)
 
 ```
-Browser                    Hono Server                  Redis              Postgres
-  │                            │                          │                   │
-  ├─ POST /chat/stream ───────►│                          │                   │
-  │  X-Tenant-ID: acme         ├─ getOrCreateSession() ──►│                   │
-  │  X-Session-ID: uuid        │◄─ session JSON ──────────┤                   │
-  │                             │                          │                   │
-  │                             ├─ saveSession() ─────────►│                   │
-  │                             │  (user msg, before LLM)  │                   │
-  │                             │                          │                   │
-  │                             ├─ agentTurnStream() ──────────────────────────►
-  │  ◄─ SSE: tool_start ───────┤     LLM call → tool_calls                    │
-  │  ◄─ SSE: tool_end ─────────┤     search_knowledge ────────────────────────►│
-  │                             │     ◄── matching chunks ─────────────────────┤
-  │  ◄─ SSE: text (token) ─────┤     LLM generates response                   │
-  │  ◄─ SSE: text (token) ─────┤     (streamed token by token)                │
-  │  ◄─ SSE: done ─────────────┤                          │                   │
-  │                             ├─ saveSession() ─────────►│                   │
-  │                             ├─ logTokenUsage() ───────────────────────────►│
-  │                             │                          │                   │
+Browser → POST /chat/stream (with tenant ID + session ID)
+       → Hono server receives the request
 ```
 
-See `[docs/sequence-flows.md](docs/sequence-flows.md)` for all flows (auth, usage, knowledge upload, tenant config).
+**2. Server loads or creates the conversation**
+
+```
+Server → Redis: GET session:{sessionId}
+       → If exists: load conversation history
+       → If new: create fresh context with tenant's system prompt from Postgres
+       → Append user's message to conversation
+       → Save to Redis immediately (so it appears in dashboard conversations)
+```
+
+**3. Server runs the agent loop** (`agentTurnStream`)
+
+```
+Server → LLM (Gemini/Ollama): send conversation + available tools
+       ← LLM responds with either:
+          a) Text tokens (streamed one by one → SSE to browser)
+          b) Tool calls (e.g. search_knowledge)
+```
+
+**4. If LLM calls a tool** (e.g. `search_knowledge`)
+
+```
+Server → SSE: "tool_start" (browser shows "searching...")
+       → Embed the query (Gemini/Ollama → 768-dim vector)
+       → Postgres: vector similarity search + full-text search
+       → Fuse results with RRF (Reciprocal Rank Fusion)
+       → Return top-K matching doc chunks to the LLM
+       → SSE: "tool_end" (browser shows "found — search_knowledge")
+       → LLM generates final answer using the retrieved docs
+       ← Text tokens streamed to browser via SSE
+```
+
+**5. Response complete**
+
+```
+Server → Redis: save updated conversation (with assistant's response)
+       → Postgres: log token usage (tenant_id, session_id, prompt/completion/total)
+       → SSE: "done" (browser shows final token count)
+```
+
+**Where data lives:**
+
+| Data | Storage | Lifetime |
+|------|---------|----------|
+| Conversation history | Redis (`session:{id}`) | 24h TTL, refreshed on each message |
+| Tenant config + system prompt | Postgres `tenants` table, cached in Redis 1h | Permanent |
+| Token usage logs | Postgres `token_usage` table | Permanent (for billing/analytics) |
+| Knowledge base chunks | Postgres `chunks` table (content + vector embedding) | Permanent until deleted |
+| User accounts | Postgres `users` table (bcrypt password hash) | Permanent |
+| LLM API keys | Postgres `tenants.llm_api_key_encrypted` (AES-256) | Permanent, encrypted |
+
+See [docs/sequence-flows.md](docs/sequence-flows.md) for additional flows (auth, widget embed, knowledge upload).
 
 ---
 
