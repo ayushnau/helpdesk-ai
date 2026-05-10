@@ -1,4 +1,6 @@
-
+<p align="center">
+  <img src="assets/banner.svg" alt="helpdesk.ai" width="100%"/>
+</p>
 
 # helpdesk-ai
 
