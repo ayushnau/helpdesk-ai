@@ -25,6 +25,19 @@ import { decrypt } from "../crypto.js";
 import { getWidgetScript } from "../widget-script.js";
 
 export function registerWidgetRoutes(app: Hono) {
+  // Explicit OPTIONS handler for CORS preflight (needed for cross-origin POST)
+  app.options("/widget/chat", (c) => {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type, X-Widget-Key",
+        "Access-Control-Max-Age": "86400",
+      },
+    });
+  });
+
   // POST /widget/chat — end-user chat via embed widget
   app.post("/widget/chat", async (c) => {
     const widgetKey = c.req.header("X-Widget-Key");
