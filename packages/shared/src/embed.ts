@@ -61,6 +61,7 @@ async function embedWithGemini(texts: string[], keyOverride?: string): Promise<n
   const requests = texts.map((text) => ({
     model: `models/${GEMINI_EMBED_MODEL}`,
     content: { parts: [{ text }] },
+    outputDimensionality: 768, // Match Ollama's nomic-embed-text dimensions for DB compatibility
   }));
 
   const response = await fetch(
