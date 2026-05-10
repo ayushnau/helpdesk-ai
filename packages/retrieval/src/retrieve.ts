@@ -32,7 +32,11 @@ export async function retrieveChunks(
   const [queryEmbedding] = await embedText(query);
   const embeddingStr = `[${queryEmbedding.join(",")}]`;
 
-  const client = new pg.Client(DB_URL);
+  const isCloud = !DB_URL.includes("localhost");
+  const client = new pg.Client({
+    connectionString: DB_URL,
+    ...(isCloud ? { ssl: { rejectUnauthorized: false } } : {}),
+  });
   await client.connect();
 
   try {
@@ -46,7 +50,7 @@ export async function retrieveChunks(
         `SELECT id, tenant_id, source_file, doc_title, section_path, content, doc_type,
                 1 - (embedding <=> $1::vector) AS similarity
          FROM chunks
-         WHERE tenant_id = $2
+         WHERE tenant_id = $2 AND embedding IS NOT NULL
          ORDER BY embedding <=> $1::vector
          LIMIT $3`,
         [embeddingStr, tenantId, candidateLimit]

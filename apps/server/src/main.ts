@@ -588,6 +588,22 @@ app.post("/admin/knowledge/upload", async (c) => {
         );
       }
 
+      // Auto-embed each chunk so it's immediately searchable
+      try {
+        const { embedText } = await import("@helpdesk-ai/shared");
+        const texts = chunks.map((ch) => ch.content);
+        const embeddings = await embedText(texts);
+        for (let i = 0; i < chunks.length; i++) {
+          await adminPool.query(
+            `UPDATE chunks SET embedding = $1::vector WHERE id = $2`,
+            [JSON.stringify(embeddings[i]), chunks[i].id]
+          );
+        }
+        console.log(`[upload] Embedded ${chunks.length} chunks`);
+      } catch (embedErr) {
+        console.warn(`[upload] Embedding failed (chunks still searchable via text): ${embedErr instanceof Error ? embedErr.message : embedErr}`);
+      }
+
       totalChunks += chunks.length;
       results.push({ file: fileName, chunks: chunks.length });
       console.log(`[upload] ${fileName} -> ${chunks.length} chunks for tenant=${tenantId}`);

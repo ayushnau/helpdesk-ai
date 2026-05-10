@@ -283,21 +283,30 @@ export function ChatSurface({ state, header, footer, showTokens = false, emptyTi
 
   const empty = state.turns.length === 0;
 
-  // Check if an LLM API key is configured
-  const [hasKey, setHasKey] = useState(true);
+  // Only show API key banner when backend requires one (not Ollama)
+  const [showKeyBanner, setShowKeyBanner] = useState(false);
   const [keyDismissed, setKeyDismissed] = useState(false);
   useEffect(() => {
     if (typeof window === "undefined") return;
     const gemini = localStorage.getItem("helpdesk-gemini-key");
     const groq = localStorage.getItem("helpdesk-groq-key");
-    setHasKey(!!(gemini || groq));
+    if (gemini || groq) return; // has key, no banner needed
+
+    // Check if the backend is using a cloud provider that needs a key
+    import("@/lib/api").then(({ getHealth }) => {
+      getHealth().then((data) => {
+        const provider = data?.provider || "";
+        const needsKey = provider.includes("gemini") || provider.includes("groq") || provider.includes("no server key");
+        setShowKeyBanner(needsKey);
+      }).catch(() => {});
+    });
   }, []);
 
   return (
     <div className={`chat-surface chat-${density}`}>
       {header}
       {/* API key info banner — non-blocking */}
-      {!hasKey && !keyDismissed && (
+      {showKeyBanner && !keyDismissed && (
         <div style={{
           display: "flex", alignItems: "center", gap: 10,
           padding: "10px 14px", margin: "8px 12px 0",
