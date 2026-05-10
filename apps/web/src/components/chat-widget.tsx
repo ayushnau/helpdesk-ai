@@ -120,18 +120,28 @@ export function useChat({ initial = [], mock = false, tenantOverride }: { initia
             });
             break;
 
-          case "error":
+          case "error": {
+            const msg = String(d.message || "Unknown error");
+            const isAuthError = msg.includes("API key") || msg.includes("API_KEY_INVALID") || msg.includes("auth");
+            const friendlyMsg = isAuthError
+              ? "**API key is missing or invalid.** Please add a valid Gemini API key in [Settings → Model & API keys](/dashboard/settings?tab=model). You can get a free key at [aistudio.google.com/apikey](https://aistudio.google.com/apikey)."
+              : `Error: ${msg}`;
             setTurns((t) => [
               ...t,
-              { role: "assistant", text: `Error: ${d.message || "Unknown error"}`, ts: new Date() },
+              { role: "assistant", text: friendlyMsg, ts: new Date() },
             ]);
             break;
+          }
         }
       });
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : "Something went wrong";
+      const msg = err instanceof Error ? err.message : "Something went wrong";
+      const isAuthError = msg.includes("API key") || msg.includes("API_KEY_INVALID") || msg.includes("auth");
+      const friendlyMsg = isAuthError
+        ? "**API key is missing or invalid.** Please add a valid Gemini API key in [Settings → Model & API keys](/dashboard/settings?tab=model)."
+        : `Error: ${msg}`;
       if (!assistantAdded) {
-        setTurns((t) => [...t, { role: "assistant", text: `Error: ${message}`, ts: new Date() }]);
+        setTurns((t) => [...t, { role: "assistant", text: friendlyMsg, ts: new Date() }]);
       }
     } finally {
       setPending(null);
