@@ -165,8 +165,8 @@ export default function LoginPage() {
           </div>
         )}
 
-        {/* Demo credentials */}
-        {tab === "signin" && (
+        {/* Demo credentials — only show in local dev */}
+        {tab === "signin" && typeof window !== "undefined" && window.location.hostname === "localhost" && (
           <div className="card" style={{ padding: 16, marginTop: 12 }}>
             <div style={{ fontSize: 11, color: "var(--fg-4)", marginBottom: 8 }} className="mono">DEMO CREDENTIALS</div>
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>

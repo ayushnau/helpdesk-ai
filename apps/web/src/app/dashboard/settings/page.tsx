@@ -153,6 +153,8 @@ function SettingsKeys() {
 }
 
 function SettingsModel() {
+  const { auth } = useAuth();
+  const tenantId = auth?.tenantId || "";
   const [geminiKey, setGeminiKey] = useState(() => {
     if (typeof window === "undefined") return "";
     return localStorage.getItem("helpdesk-gemini-key") || "";
@@ -162,10 +164,27 @@ function SettingsModel() {
     return localStorage.getItem("helpdesk-groq-key") || "";
   });
   const [keySaved, setKeySaved] = useState(false);
+  const [saving, setSaving] = useState(false);
 
-  const saveKeys = () => {
+  const saveKeys = async () => {
+    setSaving(true);
+    // Save to localStorage (for dashboard chat — sent via X-Gemini-Key header)
     localStorage.setItem("helpdesk-gemini-key", geminiKey.trim());
     localStorage.setItem("helpdesk-groq-key", groqKey.trim());
+
+    // Also save encrypted on server (for widget embed — end users don't have the key)
+    if (geminiKey.trim() && tenantId) {
+      try {
+        const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
+        await fetch(`${API_BASE}/admin/tenant/api-key`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ tenantId, apiKey: geminiKey.trim() }),
+        });
+      } catch {}
+    }
+
+    setSaving(false);
     setKeySaved(true);
     setTimeout(() => setKeySaved(false), 2000);
   };
@@ -173,7 +192,7 @@ function SettingsModel() {
   return (
     <Card>
       <div className="card-title" style={{ marginBottom: 4 }}>Model & API keys</div>
-      <div className="card-sub" style={{ marginBottom: 20 }}>Configure the LLM provider. Keys are stored in your browser only — never sent to our servers.</div>
+      <div className="card-sub" style={{ marginBottom: 20 }}>Your key is stored in your browser for dashboard chat, and encrypted on the server for the embeddable widget.</div>
 
       <FormRow label="Gemini API key" hint="Get one free at ai.google.dev. Used for both chat and embeddings.">
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
@@ -201,7 +220,7 @@ function SettingsModel() {
       </FormRow>
       <div className="form-actions">
         <Btn kind="primary" size="sm" onClick={saveKeys}>
-          {keySaved ? "Saved!" : "Save keys"}
+          {saving ? "Saving..." : keySaved ? "Saved!" : "Save keys"}
         </Btn>
       </div>
 
