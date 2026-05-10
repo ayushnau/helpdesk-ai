@@ -2,7 +2,8 @@ import pg from "pg";
 import { embedText } from "@helpdesk-ai/shared";
 import type { DocChunk } from "@helpdesk-ai/types";
 
-const DB_URL = process.env.DATABASE_URL || "postgresql://localhost:5432/helpdesk_ai";
+const RAW_DB_URL = process.env.DATABASE_URL || "postgresql://localhost:5432/helpdesk_ai";
+const DB_URL = RAW_DB_URL.replace(/[?&]sslmode=[^&]*/g, "").replace(/\?$/, "");
 const DEFAULT_TOP_K = 5;
 // RRF constant — controls how much lower-ranked results are penalized.
 // Standard value from the original RRF paper (Cormack et al., 2009).
