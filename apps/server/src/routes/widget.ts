@@ -117,7 +117,12 @@ export function registerWidgetRoutes(app: Hono) {
 
   // GET /widget.js — serve the embeddable widget script
   app.get("/widget.js", async (c) => {
-    const baseUrl = c.req.url.replace("/widget.js", "");
+    // Render proxies HTTPS → HTTP internally, so c.req.url is http://
+    // Force https:// in production
+    let baseUrl = c.req.url.replace("/widget.js", "");
+    if (baseUrl.startsWith("http://") && !baseUrl.includes("localhost")) {
+      baseUrl = baseUrl.replace("http://", "https://");
+    }
     const script = getWidgetScript(baseUrl);
     return new Response(script, {
       headers: {
