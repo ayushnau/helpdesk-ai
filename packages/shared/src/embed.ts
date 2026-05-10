@@ -6,7 +6,7 @@ const OLLAMA_URL = process.env.OLLAMA_HOST
   : "http://localhost:11434/api/embed";
 const OLLAMA_MODEL = "nomic-embed-text";
 
-const GEMINI_EMBED_MODEL = "text-embedding-004";
+const GEMINI_EMBED_MODEL = "gemini-embedding-001";
 
 // Pick embedding backend based on LLM_PROVIDER env or CLI arg
 function useGemini(): boolean {
@@ -18,12 +18,15 @@ function useGemini(): boolean {
 /**
  * Embed one or more texts.
  * Automatically uses Gemini or Ollama based on the active LLM provider.
+ *
+ * @param apiKey — optional Gemini API key override (for tenant's stored key).
+ *                 Falls back to GEMINI_API_KEY env var if not provided.
  */
-export async function embedText(input: string | string[]): Promise<number[][]> {
+export async function embedText(input: string | string[], apiKey?: string): Promise<number[][]> {
   const texts = Array.isArray(input) ? input : [input];
 
-  if (useGemini()) {
-    return embedWithGemini(texts);
+  if (useGemini() || apiKey) {
+    return embedWithGemini(texts, apiKey);
   }
   return embedWithOllama(texts);
 }
@@ -51,11 +54,10 @@ async function embedWithOllama(texts: string[]): Promise<number[][]> {
   return data.embeddings;
 }
 
-async function embedWithGemini(texts: string[]): Promise<number[][]> {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) throw new Error("GEMINI_API_KEY env var required for Gemini embeddings");
+async function embedWithGemini(texts: string[], keyOverride?: string): Promise<number[][]> {
+  const apiKey = keyOverride || process.env.GEMINI_API_KEY;
+  if (!apiKey) throw new Error("Gemini API key required for embeddings. Set GEMINI_API_KEY env var or provide via Settings.");
 
-  // Gemini embedding API supports batch via batchEmbedContents
   const requests = texts.map((text) => ({
     model: `models/${GEMINI_EMBED_MODEL}`,
     content: { parts: [{ text }] },

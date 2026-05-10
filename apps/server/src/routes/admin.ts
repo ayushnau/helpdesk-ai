@@ -5,10 +5,11 @@ import {
   getDailyTokenUsage,
   getRedis,
   saveEncryptedApiKey,
+  getEncryptedApiKey,
   generateWidgetToken,
 } from "@helpdesk-ai/agent-core";
 import { pool } from "../db.js";
-import { encrypt } from "../crypto.js";
+import { encrypt, decrypt } from "../crypto.js";
 
 export function registerAdminRoutes(app: Hono) {
   // GET /admin/tenant/:tenantId
@@ -171,10 +172,13 @@ export function registerAdminRoutes(app: Hono) {
             [chunk.id, chunk.tenant_id, chunk.source_file, chunk.doc_title, chunk.section_path, chunk.content, chunk.doc_type]
           );
         }
-        // Auto-embed
+        // Auto-embed — use tenant's stored API key if available
         try {
           const { embedText } = await import("@helpdesk-ai/shared");
-          const embeddings = await embedText(chunks.map((ch) => ch.content));
+          let tenantApiKey: string | undefined;
+          const encKey = await getEncryptedApiKey(tenantId);
+          if (encKey) { try { tenantApiKey = decrypt(encKey); } catch {} }
+          const embeddings = await embedText(chunks.map((ch) => ch.content), tenantApiKey);
           for (let i = 0; i < chunks.length; i++) {
             await pool.query(`UPDATE chunks SET embedding = $1::vector WHERE id = $2`, [JSON.stringify(embeddings[i]), chunks[i].id]);
           }
@@ -197,11 +201,14 @@ export function registerAdminRoutes(app: Hono) {
     if (!body.tenant_id) return c.json({ error: "Missing tenant_id" }, 400);
     try {
       const { embedText } = await import("@helpdesk-ai/shared");
+      let tenantApiKey: string | undefined;
+      const encKey = await getEncryptedApiKey(body.tenant_id);
+      if (encKey) { try { tenantApiKey = decrypt(encKey); } catch {} }
       const result = await pool.query(`SELECT id, content FROM chunks WHERE tenant_id = $1`, [body.tenant_id]);
       let updated = 0;
       for (let i = 0; i < result.rows.length; i += 5) {
         const batch = result.rows.slice(i, i + 5);
-        const embeddings = await embedText(batch.map((r: { content: string }) => r.content));
+        const embeddings = await embedText(batch.map((r: { content: string }) => r.content), tenantApiKey);
         for (let j = 0; j < batch.length; j++) {
           await pool.query(`UPDATE chunks SET embedding = $1::vector, search_vector = to_tsvector('english', content) WHERE id = $2`, [JSON.stringify(embeddings[j]), batch[j].id]);
           updated++;
