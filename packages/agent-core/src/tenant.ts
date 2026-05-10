@@ -235,5 +235,31 @@ export async function ensureSchema(): Promise<void> {
 
     CREATE INDEX IF NOT EXISTS idx_token_usage_tenant_date
       ON token_usage (tenant_id, created_at);
+
+    CREATE TABLE IF NOT EXISTS users (
+      id SERIAL PRIMARY KEY,
+      email TEXT UNIQUE NOT NULL,
+      password_hash TEXT NOT NULL,
+      name TEXT NOT NULL,
+      tenant_id TEXT NOT NULL REFERENCES tenants(tenant_id),
+      role TEXT DEFAULT 'admin',
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
   `);
+
+  // Seed demo users (idempotent — skips if email already exists)
+  const demoUsers = [
+    { email: "marius@posthog.com", password: "demo", name: "Marius Andra", tenantId: "posthog" },
+    { email: "admin@acme.com", password: "demo", name: "Alex Chen", tenantId: "acme" },
+  ];
+
+  for (const user of demoUsers) {
+    const hash = await Bun.password.hash(user.password);
+    await pool.query(
+      `INSERT INTO users (email, password_hash, name, tenant_id)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (email) DO NOTHING`,
+      [user.email, hash, user.name, user.tenantId],
+    );
+  }
 }

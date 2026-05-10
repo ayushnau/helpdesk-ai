@@ -11,6 +11,28 @@ function getLLMHeaders(): Record<string, string> {
   return headers;
 }
 
+// ── Auth API ───────────────────────────────────────────────────────────────
+
+export async function authSignup(data: { email: string; password: string; name: string; companyName: string }) {
+  const res = await fetch(`${API_BASE}/auth/signup`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  return res.json();
+}
+
+export async function authLogin(data: { email: string; password: string }) {
+  const res = await fetch(`${API_BASE}/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  return res.json();
+}
+
+// ── Chat API ───────────────────────────────────────────────────────────────
+
 export async function sendMessageStream(
   message: string,
   tenantId: string,
