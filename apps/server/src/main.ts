@@ -227,9 +227,13 @@ app.get("/health", async (c) => {
 
 // ── Auth API ──────────────────────────────────────────────────────────────
 
+const DB_URL = (process.env.DATABASE_URL || "postgresql://localhost:5432/helpdesk_ai").replace(/[?&]sslmode=[^&]*/g, "").replace(/\?$/, "");
+const isCloudDB = !DB_URL.includes("localhost");
+
 const authPool = new pg.Pool({
-  connectionString: process.env.DATABASE_URL || "postgresql://localhost:5432/helpdesk_ai",
+  connectionString: DB_URL,
   max: 5,
+  ...(isCloudDB ? { ssl: { rejectUnauthorized: false } } : {}),
 });
 
 // POST /auth/signup — register a new user + auto-create tenant
@@ -307,8 +311,9 @@ app.post("/auth/login", async (c) => {
 // ── Admin API ──────────────────────────────────────────────────────────────
 
 const adminPool = new pg.Pool({
-  connectionString: process.env.DATABASE_URL || "postgresql://localhost:5432/helpdesk_ai",
-  max: 5
+  connectionString: DB_URL,
+  max: 5,
+  ...(isCloudDB ? { ssl: { rejectUnauthorized: false } } : {}),
 });
 
 // GET /admin/tenant/:tenantId — get tenant config
