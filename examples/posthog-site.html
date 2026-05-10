@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PostHog Docs — Feature Flags</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, system-ui, sans-serif; background: #FAFAF9; color: #1a1a1a; }
+    nav { display: flex; align-items: center; gap: 24px; height: 56px; padding: 0 32px;
+          background: white; border-bottom: 1px solid #E5E5E5; font-size: 14px; }
+    nav .brand { font-weight: 600; font-size: 16px; }
+    nav .links { display: flex; gap: 18px; color: #525252; font-size: 13px; margin-left: auto; }
+    .content { max-width: 800px; margin: 48px auto; padding: 0 32px; }
+    .eyebrow { font-size: 12px; color: #737373; text-transform: uppercase; letter-spacing: 0.06em; }
+    h1 { font-size: 36px; margin: 8px 0 24px; font-weight: 600; letter-spacing: -0.02em; }
+    h2 { font-size: 24px; margin: 32px 0 12px; font-weight: 600; }
+    p { color: #404040; line-height: 1.7; margin-bottom: 16px; }
+    code { background: #F5F5F5; padding: 2px 6px; border-radius: 4px; font-size: 13px; }
+    pre { background: #1a1a1a; color: #E5E5E5; padding: 16px; border-radius: 8px; margin: 16px 0;
+          font-size: 13px; overflow-x: auto; }
+    ol, ul { padding-left: 24px; margin-bottom: 16px; color: #404040; line-height: 1.7; }
+    li { margin: 6px 0; }
+    .note { background: #FFF7ED; border-left: 3px solid #F59E0B; padding: 12px 16px; border-radius: 0 6px 6px 0;
+            font-size: 14px; color: #92400E; margin: 16px 0; }
+  </style>
+</head>
+<body>
+  <nav>
+    <div class="brand">PostHog</div>
+    <span style="color: #E5E5E5">|</span>
+    <span style="color: #737373; font-size: 13px">Docs</span>
+    <div class="links">
+      <a>Product</a>
+      <a>Docs</a>
+      <a>Community</a>
+      <a>Pricing</a>
+    </div>
+  </nav>
+
+  <div class="content">
+    <div class="eyebrow">Feature Flags</div>
+    <h1>Creating your first feature flag</h1>
+
+    <p>Feature flags let you enable or disable features for specific users or groups without deploying new code.
+       This guide walks you through creating and using your first flag.</p>
+
+    <h2>1. Create a flag</h2>
+    <ol>
+      <li>Navigate to <strong>Feature Flags</strong> in the sidebar</li>
+      <li>Click <strong>New feature flag</strong></li>
+      <li>Enter a key (e.g., <code>new-checkout-flow</code>)</li>
+      <li>Set your release conditions</li>
+    </ol>
+
+    <h2>2. Add release conditions</h2>
+    <p>Release conditions control who sees your flag. You can target by:</p>
+    <ul>
+      <li>Percentage rollout (e.g., 25% of users)</li>
+      <li>User properties (e.g., <code>email contains @company.com</code>)</li>
+      <li>Geographic region (e.g., <code>$geoip_country_code = "US"</code>)</li>
+    </ul>
+
+    <h2>3. Check the flag in your code</h2>
+    <pre>import posthog from 'posthog-js'
+
+// Boolean flag
+if (posthog.isFeatureEnabled('new-checkout-flow')) {
+  showNewCheckout()
+}
+
+// Multivariate flag
+const variant = posthog.getFeatureFlag('checkout-button-color')
+if (variant === 'blue') {
+  setButtonColor('#0000FF')
+}</pre>
+
+    <div class="note">
+      <strong>Note:</strong> Feature flag evaluations count toward your MTU (monthly tracked users) limit,
+      regardless of whether the flag returns true or false.
+    </div>
+
+    <h2>4. Local evaluation (optional)</h2>
+    <p>For server-side flags, use local evaluation to avoid an API call on every request.
+       The SDK downloads flag definitions and evaluates them locally.</p>
+
+    <pre>const client = new PostHog('phc_...', {
+  host: 'https://app.posthog.com',
+  personalApiKey: 'phx_...',  // enables local evaluation
+})
+
+// Evaluates locally — no network call
+const enabled = await client.isFeatureEnabled(
+  'new-checkout-flow',
+  'user-123'
+)</pre>
+
+    <p style="margin-top: 48px; color: #737373; font-size: 13px;">
+      Last updated: May 2026 · <a href="#" style="color: #737373">Edit this page</a>
+    </p>
+  </div>
+
+  <!-- helpdesk.ai widget — the only line a merchant needs to add -->
+  <script
+    src="http://localhost:3001/widget.js"
+    data-tenant-id="posthog"
+    data-key="tk_posthog_demo"
+    data-title="PostHog Support"
+    data-accent="#1D4AFF">
+  </script>
+</body>
+</html>

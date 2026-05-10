@@ -1,5 +1,6 @@
 import pg from "pg";
 import Redis from "ioredis";
+import crypto from "crypto";
 import type { Message, TokenUsage } from "./providers/index.js";
 import type { MemoryState } from "./memory.js";
 
@@ -245,6 +246,10 @@ export async function ensureSchema(): Promise<void> {
       role TEXT DEFAULT 'admin',
       created_at TIMESTAMPTZ DEFAULT NOW()
     );
+
+    -- Add widget columns to tenants (idempotent)
+    ALTER TABLE tenants ADD COLUMN IF NOT EXISTS llm_api_key_encrypted TEXT;
+    ALTER TABLE tenants ADD COLUMN IF NOT EXISTS widget_token TEXT;
   `);
 
   // Seed demo users (idempotent — skips if email already exists)
@@ -262,4 +267,55 @@ export async function ensureSchema(): Promise<void> {
       [user.email, hash, user.name, user.tenantId],
     );
   }
+
+  // Seed widget tokens for demo tenants
+  await pool.query(`UPDATE tenants SET widget_token = 'tk_posthog_demo' WHERE tenant_id = 'posthog' AND widget_token IS NULL`);
+  await pool.query(`UPDATE tenants SET widget_token = 'tk_acme_demo' WHERE tenant_id = 'acme' AND widget_token IS NULL`);
+}
+
+export async function getTenantByWidgetToken(token: string): Promise<TenantConfig | null> {
+  try {
+    const result = await pool.query(
+      `SELECT tenant_id, system_prompt, max_tokens_per_day, llm_api_key_encrypted
+       FROM tenants WHERE widget_token = $1`,
+      [token],
+    );
+    if (result.rows.length === 0) return null;
+    const row = result.rows[0];
+    return {
+      tenantId: row.tenant_id,
+      systemPrompt: row.system_prompt,
+      maxTokensPerDay: row.max_tokens_per_day ?? 0,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export async function getEncryptedApiKey(tenantId: string): Promise<string | null> {
+  try {
+    const result = await pool.query(
+      `SELECT llm_api_key_encrypted FROM tenants WHERE tenant_id = $1`,
+      [tenantId],
+    );
+    return result.rows[0]?.llm_api_key_encrypted || null;
+  } catch {
+    return null;
+  }
+}
+
+export async function saveEncryptedApiKey(tenantId: string, encrypted: string): Promise<void> {
+  await pool.query(
+    `UPDATE tenants SET llm_api_key_encrypted = $1, updated_at = NOW() WHERE tenant_id = $2`,
+    [encrypted, tenantId],
+  );
+}
+
+export async function generateWidgetToken(tenantId: string): Promise<string> {
+  const token = `tk_${tenantId}_${crypto.randomUUID().slice(0, 8)}`;
+  await pool.query(
+    `UPDATE tenants SET widget_token = $1, updated_at = NOW() WHERE tenant_id = $2`,
+    [token, tenantId],
+  );
+  return token;
 }

@@ -1,178 +1,302 @@
+
+
 # helpdesk-ai
 
-A production-grade, multi-tenant AI support agent built in TypeScript. Uses RAG (Retrieval-Augmented Generation) with hybrid search to answer questions from a documentation knowledge base.
+A production-grade, multi-tenant AI support agent built in TypeScript. Not a chatbot — a full agent system that searches your docs, reasons over them, and cites sources.
 
-Built as a learning project to deeply understand agent engineering — every architectural decision is documented in [`ayushnau-ops/LEARNING.md`](../ayushnau-ops/LEARNING.md).
+**[Live Demo](https://helpdesk-ai-web.onrender.com)** · **[Watch Video](https://www.loom.com/share/fd1f8fffe3954805923cc802c757ac33)** · **[Source Code](https://github.com/ayushnau/helpdesk-ai)**
 
 ---
 
-## Architecture
+## What it does
 
-```
-helpdesk-ai/
-├── apps/
-│   ├── api/                  Hand-rolled agent (CLI REPL)
-│   └── mastra-agent/         Mastra framework agent (CLI REPL)
-├── packages/
-│   ├── agent-core/           Agent loop, tool registry, provider abstraction, streaming
-│   ├── retrieval/            Hybrid retrieval (vector + BM25), RRF fusion
-│   ├── ingestion/            Doc parsing, chunking, embedding pipeline
-│   ├── shared/               Shared utilities (embedText via Ollama)
-│   ├── types/                Shared TypeScript types (DocChunk)
-│   └── eval/                 Evaluation suite (planned)
-└── data/
-    └── chunks.json           Intermediate chunked docs (pre-embedding)
-```
-
-### Two agents, one retrieval pipeline
-
-Both agents use the same `packages/retrieval/` pipeline underneath:
-
-- **Hand-rolled** (`apps/api/`) — Custom agent loop with typed tool results, streaming via async generators, 5-category error handling. More control, better with local models.
-- **Mastra** (`apps/mastra-agent/`) — Framework-based agent using `@mastra/core`. Less code, built-in memory support, but less visibility into the agent loop.
+- **Tool-calling agent loop** — searches knowledge base, reasons over results, cites sources with references
+- **Multi-tenant isolation** — each customer gets their own system prompt, knowledge base, token limits, and cost tracking
+- **RAG pipeline** — upload markdown docs, auto-chunk by headings, hybrid search (vector + full-text), RRF fusion
+- **Streaming responses** — SSE token-by-token streaming from LLM to browser
+- **Admin dashboard** — real-time token usage, conversation transcripts, prompt editor with version history, knowledge base management
+- **Per-tenant cost tracking** — daily token caps, usage breakdown by hour/day, cost attribution
+- **Bring your own key** — users provide their own Gemini/Groq API key via the Settings UI
 
 ---
 
 ## RAG Pipeline
 
 ```
-Markdown docs → Chunk (heading-based) → Embed (nomic-embed-text) → pgvector
-                                                                        ↓
+Markdown docs → Chunk (heading-based) → Embed (Gemini/Ollama) → pgvector
+                                                                      ↓
 User query → Embed query → Vector search (cosine) ─┐
                          → Keyword search (tsvector) ─┤→ RRF fusion → Top-K chunks → LLM
 ```
 
-### Hybrid retrieval
+Hybrid retrieval combining vector similarity + full-text search via Reciprocal Rank Fusion (RRF). Configurable weights.
 
-Combines two search methods via Reciprocal Rank Fusion (RRF):
+---
 
-- **Vector search** — Semantic similarity via pgvector (`embedding <=> query_vector`). Finds conceptually related content.
-- **Keyword search** — Postgres full-text search (`tsvector` + `ts_rank`). Finds exact term matches. Pre-computed at ingestion time with GIN index.
+## Request Flow
 
-Configurable weights (`vectorWeight`, `textWeight`) control the balance.
+```
+Browser                    Hono Server                  Redis              Postgres
+  │                            │                          │                   │
+  ├─ POST /chat/stream ───────►│                          │                   │
+  │  X-Tenant-ID: acme         ├─ getOrCreateSession() ──►│                   │
+  │  X-Session-ID: uuid        │◄─ session JSON ──────────┤                   │
+  │                             │                          │                   │
+  │                             ├─ saveSession() ─────────►│                   │
+  │                             │  (user msg, before LLM)  │                   │
+  │                             │                          │                   │
+  │                             ├─ agentTurnStream() ──────────────────────────►
+  │  ◄─ SSE: tool_start ───────┤     LLM call → tool_calls                    │
+  │  ◄─ SSE: tool_end ─────────┤     search_knowledge ────────────────────────►│
+  │                             │     ◄── matching chunks ─────────────────────┤
+  │  ◄─ SSE: text (token) ─────┤     LLM generates response                   │
+  │  ◄─ SSE: text (token) ─────┤     (streamed token by token)                │
+  │  ◄─ SSE: done ─────────────┤                          │                   │
+  │                             ├─ saveSession() ─────────►│                   │
+  │                             ├─ logTokenUsage() ───────────────────────────►│
+  │                             │                          │                   │
+```
+
+See `[docs/sequence-flows.md](docs/sequence-flows.md)` for all flows (auth, usage, knowledge upload, tenant config).
+
+---
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        Browser (Next.js 15)                      │
+│  Landing page · Login/Signup · Dashboard · Chat (SSE streaming)  │
+└──────────────────────────┬──────────────────────────────────────┘
+                           │ HTTP + SSE
+┌──────────────────────────▼──────────────────────────────────────┐
+│                     Hono API Server                              │
+│  /auth/* · /chat · /chat/stream · /admin/* · /health             │
+│                                                                  │
+│  ┌─────────────────────────────────────────────────────────┐     │
+│  │              agent-core (agentTurnStream)                │     │
+│  │  Provider abstraction · Tool registry · Memory/compress  │     │
+│  │  Streaming via AsyncGenerator · Multi-tenant scoping     │     │
+│  └─────────┬──────────────────────┬────────────────────────┘     │
+│            │                      │                              │
+│   ┌────────▼────────┐   ┌────────▼────────┐                     │
+│   │  LLM Provider   │   │  search_knowledge│                     │
+│   │  Gemini / Groq   │   │  (hybrid RAG)   │                     │
+│   │  Ollama (local)  │   │  vector + BM25  │                     │
+│   └─────────────────┘   └────────┬────────┘                     │
+└──────────────────────────────────┼──────────────────────────────┘
+                                   │
+        ┌──────────────────────────┼──────────────────┐
+        │                          │                   │
+   ┌────▼─────┐            ┌──────▼──────┐     ┌─────▼─────┐
+   │ Postgres  │            │   Redis     │     │  Postgres  │
+   │ tenants   │            │ sessions    │     │  chunks    │
+   │ users     │            │ (24h TTL)   │     │  (pgvector)│
+   │ token_usage│           │ tenant cache│     │            │
+   └───────────┘            └─────────────┘     └────────────┘
+```
+
+### Monorepo structure
+
+```
+helpdesk-ai/
+├── apps/
+│   ├── server/            Hono HTTP server (REST + SSE streaming)
+│   ├── web/               Next.js 15 frontend (App Router)
+│   └── api/               CLI REPL agent
+├── packages/
+│   ├── agent-core/        Agent loop, tools, providers, streaming, multi-tenancy
+│   ├── retrieval/         Hybrid search (vector + BM25 + RRF fusion)
+│   ├── ingestion/         Doc parsing, chunking, embedding pipeline
+│   ├── shared/            Embedding utilities (Ollama / Gemini)
+│   └── types/             Shared TypeScript types
+├── data/
+│   └── demo/              Demo markdown files for Acme tenant
+└── docs/
+    └── sequence-flows.md  Request lifecycle diagrams
+```
+
+---
+
+## Embed in 30 seconds
+
+Add a single script tag to any website — your customers get an AI support agent instantly:
+
+```html
+<script
+  src="https://helpdesk-ai-api.onrender.com"
+  data-tenant-id="acme"
+  data-key="tk_acme_demo"
+  data-title="Acme Support"
+  data-accent="#10B981">
+</script>
+```
+
+That's it. The widget handles everything — chat UI, SSE streaming, tool calls, markdown rendering.
+
+
+| Attribute        | Purpose                                                    |
+| ---------------- | ---------------------------------------------------------- |
+| `data-tenant-id` | Which tenant's knowledge base to search                    |
+| `data-key`       | Public widget token (NOT the LLM API key — safe to expose) |
+| `data-title`     | Chat header title                                          |
+| `data-accent`    | Brand color for the bubble and accents                     |
+| `data-position`  | `right` (default) or `left`                                |
+
+
+**How it works under the hood:**
+
+1. Merchant saves their Gemini API key in the dashboard (encrypted with AES-256, stored server-side)
+2. Widget loads on the merchant's site via the script tag
+3. End user sends a message → widget calls `POST /widget/chat` with the public widget token
+4. Server looks up the tenant by token, decrypts their API key, runs the agent, streams the response
+5. End user sees the answer with citations — never sees or touches any API key
+
+See working examples in `[examples/](examples/)` — open `posthog-site.html` or `acme-site.html` with the server running.
 
 ---
 
 ## Stack
 
-- **TypeScript / Node.js / Bun** — Primary runtime
-- **PostgreSQL + pgvector** — Vector storage and ANN search (HNSW index)
-- **Ollama** — Local embedding (nomic-embed-text, 768-dim) and LLM inference
-- **Mastra** — Optional agent framework (v1.30)
-- **Zod** — Schema validation at tool boundaries
+
+| Layer      | Technology                                               |
+| ---------- | -------------------------------------------------------- |
+| Frontend   | Next.js 15 (App Router), React 19, CSS custom properties |
+| Backend    | Hono, Bun                                                |
+| Database   | PostgreSQL + pgvector (Supabase)                         |
+| Cache      | Redis (Upstash)                                          |
+| LLM        | Gemini, Groq, Ollama (local)                             |
+| Embeddings | Gemini text-embedding-004 / Ollama nomic-embed-text      |
+| Auth       | bcrypt (Bun.password), localStorage sessions             |
+| Deployment | Render (Docker containers)                               |
+
 
 ---
 
-## Setup
+## Features
+
+### Agent loop
+
+- Tool-calling with `search_knowledge` (RAG), `read_file`, `write_file`, `list_directory`, `search_text`
+- Streaming via AsyncGenerator — single `agentTurnStream()` powers CLI, HTTP, and SSE
+- Auto-continuation on truncated responses
+- Structured error handling (5 error categories)
+- Context window compression when approaching token limits
+
+### Multi-tenancy
+
+- Tenant-scoped knowledge base search (each tenant's docs are isolated)
+- Per-tenant system prompts (editable via dashboard)
+- Per-tenant daily token caps with hard limits
+- Tenant config cached in Redis (1h TTL) with Postgres as source of truth
+- User signup auto-creates a new tenant
+
+### Dashboard
+
+- **Overview** — real-time token usage (hourly/daily charts), active sessions, cost tracking
+- **Prompt editor** — edit system prompt with split-view live preview, version history
+- **Knowledge base** — upload .md/.mdx/.txt files, auto-chunk, view indexed documents
+- **Conversations** — browse active + historical sessions, view full transcripts
+- **Settings** — tenant config, daily limits, API key management, model selection
+
+### Chat
+
+- SSE streaming (token-by-token rendering)
+- Debug sidebar (session ID, tenant, model, token count, tool calls, citations)
+- Demo tenant switcher for unauthenticated users
+- Markdown rendering with code blocks, lists, bold, inline citations
+
+---
+
+## Running locally
 
 ### Prerequisites
 
 - Bun (v1.2+)
-- PostgreSQL 16 with pgvector extension
-- Ollama with `nomic-embed-text` and `qwen3:8b` (or `qwen2.5:7b`)
+- PostgreSQL with pgvector extension
+- Redis (or Upstash)
+- Ollama with `nomic-embed-text` model (for local embeddings)
 
-### Install
+### Setup
 
 ```bash
+git clone https://github.com/ayushnau/helpdesk-ai.git
 cd helpdesk-ai
 bun install
-cp .env.example .env  # add your API keys
+cp .env.example .env  # configure DATABASE_URL, REDIS_URL
 ```
 
-### Database setup
+### Database
 
 ```sql
 CREATE DATABASE helpdesk_ai;
 \c helpdesk_ai
 CREATE EXTENSION vector;
+```
 
-CREATE TABLE chunks (
-  id TEXT PRIMARY KEY,
-  tenant_id TEXT NOT NULL,
-  source_file TEXT NOT NULL,
-  doc_title TEXT NOT NULL,
-  section_path TEXT NOT NULL,
-  content TEXT NOT NULL,
-  doc_type TEXT NOT NULL,
-  embedding vector(768),
-  search_vector tsvector,
-  metadata JSONB DEFAULT '{}',
-  created_at TIMESTAMPTZ DEFAULT now()
-);
+The server runs `ensureSchema()` on startup which creates all tables and seeds demo tenants/users.
 
-CREATE INDEX idx_chunks_tenant_id ON chunks(tenant_id);
-CREATE INDEX idx_chunks_tenant_embedding ON chunks USING hnsw(embedding vector_cosine_ops) WHERE tenant_id IS NOT NULL;
-CREATE INDEX idx_chunks_search_vector ON chunks USING gin(search_vector);
+### Run
+
+```bash
+# Start the backend (default: Ollama)
+bun run server
+
+# Start with Gemini
+bun run server gemini
+
+# Start the frontend
+bun run web:dev
+
+# CLI agent (REPL)
+bun run agent
 ```
 
 ### Ingest docs
 
 ```bash
-# Step 1: Parse and chunk markdown docs
-bun run chunks
-
-# Step 2: Embed chunks and insert into pgvector
-bun run embed
+bun run chunks    # Parse and chunk markdown docs
+bun run embed     # Embed chunks and insert into pgvector
 ```
 
 ---
 
-## Running
+## Deployment
 
-```bash
-# Hand-rolled agent (default: Ollama qwen2.5:7b)
-bun run agent
+Deployed on Render with Supabase (Postgres) and Upstash (Redis).
 
-# Hand-rolled with specific provider
-bun run agent ollama qwen3:8b
-bun run agent groq
-bun run agent gemini
+Set these environment variables on the backend service:
 
-# Mastra agent (default: Ollama qwen3:8b)
-bun run agent:mastra
 
-# Search the knowledge base directly
-bun run search "how to set up stripe"
-bun run search "stripe webhook" posthog 5 0.3 0.7  # custom weights
-```
+| Variable       | Purpose                           |
+| -------------- | --------------------------------- |
+| `DATABASE_URL` | Supabase pooler connection string |
+| `REDIS_URL`    | Upstash Redis URL (rediss://)     |
+| `LLM_PROVIDER` | `gemini` or `groq`                |
+| `CORS_ORIGINS` | Frontend URL (comma-separated)    |
 
-### REPL commands
 
-| Command  | What it does                                      |
-| -------- | ------------------------------------------------- |
-| `/clear` | Wipe conversation history (system prompt is kept) |
-| `/quit`  | Exit cleanly                                      |
-| `Ctrl-C` | Graceful shutdown                                 |
+The frontend needs `NEXT_PUBLIC_API_URL` as a Docker build arg (baked at build time).
 
 ---
 
-## Available tools
+## Demo accounts
 
-| Tool               | Description                                                        |
-| ------------------ | ------------------------------------------------------------------ |
-| `search_knowledge` | Hybrid RAG search over the documentation knowledge base            |
-| `read_file`        | Read a file's contents (truncated at 50 KB)                        |
-| `write_file`       | Create or overwrite a file                                         |
-| `list_directory`   | List entries in a directory                                        |
-| `search_text`      | Literal text search via `grep -rIn` (local files only)             |
 
-The system prompt guides the LLM: use `search_knowledge` for product/docs questions, `search_text` only for local code files.
+| Email                                           | Password | Tenant    |
+| ----------------------------------------------- | -------- | --------- |
+| [marius@posthog.com](mailto:marius@posthog.com) | demo     | PostHog   |
+| [admin@acme.com](mailto:admin@acme.com)         | demo     | Acme Corp |
 
----
 
-## Environment variables
-
-| Variable                       | Required?             | Purpose                              |
-| ------------------------------ | --------------------- | ------------------------------------ |
-| `DATABASE_URL`                 | Optional              | Postgres connection (default: localhost) |
-| `GROQ_API_KEY`                 | For `groq` provider   | Groq API auth                        |
-| `GEMINI_API_KEY`               | For `gemini` provider | Gemini API auth                      |
-| `GOOGLE_GENERATIVE_AI_API_KEY` | For Mastra + Gemini   | Mastra uses this env var name        |
-| `MASTRA_MODEL`                 | Optional              | Mastra model (default: `ollama/qwen3:8b`) |
-| `MASTRA_MODEL_URL`             | Optional              | Custom model endpoint URL            |
+Or sign up to create your own tenant.
 
 ---
 
 ## License
 
 ISC
+
+---
+
+Built by [Ayush Nautiyal](https://ayushnau.github.io) · [Email](mailto:ayushnautiyaldevelopr@gmail.com) · [Twitter](https://x.com/Avicula11) · [LinkedIn](https://linkedin.com/in/ayush-nautiyal-947266177)

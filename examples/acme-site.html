@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Acme Corp — API Documentation</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, system-ui, sans-serif; background: #FAFAFA; color: #1a1a1a; }
+    nav { display: flex; align-items: center; gap: 24px; height: 56px; padding: 0 32px;
+          background: white; border-bottom: 1px solid #E5E5E5; }
+    nav .brand { font-weight: 700; font-size: 16px; color: #10B981; }
+    nav .links { display: flex; gap: 18px; color: #525252; font-size: 13px; margin-left: auto; }
+    .content { max-width: 800px; margin: 48px auto; padding: 0 32px; }
+    h1 { font-size: 36px; margin-bottom: 16px; font-weight: 600; letter-spacing: -0.02em; }
+    h2 { font-size: 22px; margin: 32px 0 12px; font-weight: 600; }
+    p { color: #404040; line-height: 1.7; margin-bottom: 16px; }
+    code { background: #F0F0F0; padding: 2px 6px; border-radius: 4px; font-size: 13px; }
+    pre { background: #1a1a1a; color: #E5E5E5; padding: 16px; border-radius: 8px; margin: 16px 0;
+          font-size: 13px; overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; margin: 16px 0; }
+    th, td { text-align: left; padding: 10px 16px; border-bottom: 1px solid #E5E5E5; font-size: 14px; }
+    th { font-weight: 600; background: #F9F9F9; }
+  </style>
+</head>
+<body>
+  <nav>
+    <div class="brand">Acme Corp</div>
+    <div class="links">
+      <a>Products</a>
+      <a>API Docs</a>
+      <a>Pricing</a>
+      <a>Support</a>
+    </div>
+  </nav>
+
+  <div class="content">
+    <h1>API Quickstart</h1>
+    <p>Get started with the Acme API in under 5 minutes. All you need is an API key.</p>
+
+    <h2>Authentication</h2>
+    <p>All requests require a Bearer token in the Authorization header:</p>
+    <pre>curl -H "Authorization: Bearer YOUR_API_KEY" \
+  https://api.acme.com/v1/products</pre>
+
+    <h2>Core Endpoints</h2>
+    <table>
+      <tr><th>Method</th><th>Endpoint</th><th>Description</th></tr>
+      <tr><td><code>GET</code></td><td>/v1/products</td><td>List all products</td></tr>
+      <tr><td><code>POST</code></td><td>/v1/orders</td><td>Create an order</td></tr>
+      <tr><td><code>GET</code></td><td>/v1/orders/:id</td><td>Get order status</td></tr>
+    </table>
+
+    <h2>Rate Limits</h2>
+    <table>
+      <tr><th>Tier</th><th>Limit</th></tr>
+      <tr><td>Free</td><td>100 req/min</td></tr>
+      <tr><td>Pro</td><td>1,000 req/min</td></tr>
+      <tr><td>Enterprise</td><td>Unlimited</td></tr>
+    </table>
+
+    <h2>Error Format</h2>
+    <pre>{
+  "error": {
+    "code": "invalid_api_key",
+    "message": "The API key provided is expired or invalid."
+  }
+}</pre>
+  </div>
+
+  <!-- helpdesk.ai widget -->
+  <script
+    src="http://localhost:3001/widget.js"
+    data-tenant-id="acme"
+    data-key="tk_acme_demo"
+    data-title="Acme Support"
+    data-accent="#10B981">
+  </script>
+</body>
+</html>

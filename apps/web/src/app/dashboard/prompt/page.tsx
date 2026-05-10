@@ -148,10 +148,15 @@ export default function PromptPage() {
       try {
         const config = await getTenantConfig(tenantId);
         if (cancelled) return;
+        // Only replace if API returned a real prompt (not empty/null)
         if (config?.systemPrompt) {
           setPrompt(config.systemPrompt);
         }
-      } catch {}
+        // If API returned nothing, keep the fallback — it means the tenant
+        // hasn't customized their prompt yet
+      } catch {
+        // API failed — keep fallback
+      }
       finally { if (!cancelled) setLoading(false); }
     }
     load();

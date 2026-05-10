@@ -15,6 +15,10 @@ export {
   ensureSchema,
   getRedis,
   closeConnections,
+  getTenantByWidgetToken,
+  getEncryptedApiKey,
+  saveEncryptedApiKey,
+  generateWidgetToken,
 } from "./tenant.js";
 export {
   getOrCreateSession,
